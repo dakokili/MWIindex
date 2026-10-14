@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MWI 银河生产利润指数
 // @namespace    https://github.com/dakokili/MWIindex
-// @version      1.1.1
+// @version      1.2.0
 // @description  三采、三制造、饮食与八个技能的税后利润指数，真实历史成交量，日周月K线。
 // @author       MWIindex contributors
 // @match        https://www.milkywayidle.com/*
@@ -67,8 +67,9 @@ SOFTWARE.
   };
   var DEFAULT_OPTIONS = Object.freeze({
     minLevel: 20,
-    minVolume: 1e3,
-    top: 5,
+    minVolume: 1e4,
+    top: 3,
+    compositeTop: 5,
     tax: 0.04
   });
   var gathering = /* @__PURE__ */ new Set(["milking", "foraging", "woodcutting"]);
@@ -365,10 +366,24 @@ SOFTWARE.
     const p = ranks(rows, (r) => r.profit), v = ranks(rows, (r) => r.volume === null ? 0 : r.volume);
     return rows.map((r) => ({
       ...r,
-      score: 0.5 * p.get(r) + 0.5 * v.get(r)
+      score: r.skill === "brewing" ? 0.5 * p.get(r) + 0.5 * v.get(r) : p.get(r)
     })).sort(
       (a, b) => b.score - a.score || b.profit - a.profit || a.id.localeCompare(b.id)
     ).slice(0, options.top);
+  }
+  function selectCompositeMembers(members, options = DEFAULT_OPTIONS) {
+    return [...members].sort((a, b) => b.profit - a.profit || a.id.localeCompare(b.id)).slice(0, options.compositeTop);
+  }
+  function basketCandle(day, snapshots, members) {
+    const points = snapshots.flatMap(
+      (s, i) => members.length && members.every((m) => m.results[i]) ? [{ time: s.time, value: mean(members.map((m) => m.results[i].profit)) }] : []
+    );
+    const details = members.map(({ results, ...m }) => ({
+      ...m,
+      diet: results.filter(Boolean).at(-1)?.teaIds || [],
+      rareIncome: mean(results.filter(Boolean).map((r) => r.rareIncome))
+    }));
+    return candle(day, points, details);
   }
   async function buildIndices(data, snapshots, options = DEFAULT_OPTIONS, onProgress = () => {
   }, yieldTask = () => Promise.resolve()) {
@@ -385,38 +400,23 @@ SOFTWARE.
     }
     let done = 0;
     for (const [day, ss] of byDay) {
-      const points = {};
+      const baskets = {};
       for (const skill of Object.keys(SKILLS)) {
         const members = selectMembers(
           model.filter((m) => m.action.skill === skill),
           ss,
           options
         );
-        points[skill] = ss.map((s, i) => ({
-          time: s.time,
-          value: members.length && members.every((m) => m.results[i]) ? mean(members.map((m) => m.results[i].profit)) : null
-        }));
-        const details = members.map(({ results, ...m }) => ({
-          ...m,
-          diet: results.filter(Boolean).at(-1)?.teaIds || [],
-          rareIncome: mean(results.filter(Boolean).map((r) => r.rareIncome))
-        }));
-        const c = candle(
-          day,
-          points[skill].filter((p) => p.value !== null),
-          details
-        );
+        baskets[skill] = members;
+        const c = basketCandle(day, ss, members);
         if (c) series[skill].push(c);
       }
       for (const [key, group] of Object.entries(GROUPS)) {
-        const ps = ss.map((s, i) => ({
-          time: s.time,
-          value: group.skills.every((k) => points[k][i].value !== null) ? mean(group.skills.map((k) => points[k][i].value)) : null
-        }));
-        const c = candle(
-          day,
-          ps.filter((p) => p.value !== null)
+        const members = selectCompositeMembers(
+          group.skills.flatMap((skill) => baskets[skill]),
+          options
         );
+        const c = basketCandle(day, ss, members);
         if (c) series[key].push(c);
       }
       if (++done % 4 === 0) {
@@ -699,7 +699,7 @@ SOFTWARE.
     if (!bars.length) {
       const p = document.createElement("p");
       p.className = "empty";
-      p.textContent = "\u6682\u65E0\u7B26\u5408\u7B5B\u9009\u6761\u4EF6\u7684\u6570\u636E\u3002\u6700\u4F4E\u884C\u52A8\u7B49\u7EA7 20\u3001\u65E5\u6210\u4EA4\u91CF\u81F3\u5C11 1,000\uFF1B\u8BF7\u68C0\u67E5\u89D2\u8272\u7B49\u7EA7\u548C\u6570\u636E\u6E90\u72B6\u6001\u3002";
+      p.textContent = "\u6682\u65E0\u7B26\u5408\u7B5B\u9009\u6761\u4EF6\u7684\u6570\u636E\u3002\u6700\u4F4E\u884C\u52A8\u7B49\u7EA7 20\u3001\u65E5\u6210\u4EA4\u91CF\u81F3\u5C11 10,000\uFF1B\u8BF7\u68C0\u67E5\u89D2\u8272\u7B49\u7EA7\u548C\u6570\u636E\u6E90\u72B6\u6001\u3002";
       container.append(p);
       return;
     }
@@ -942,7 +942,7 @@ SOFTWARE.
   }
 
   // src/main.js
-  var VERSION = "1.1.1";
+  var VERSION = "1.2.0";
   function node(tag, attrs = {}, text) {
     const e = document.createElement(tag);
     for (const [k, v] of Object.entries(attrs)) {
@@ -1086,7 +1086,7 @@ SOFTWARE.
       node(
         "p",
         { class: "muted" },
-        "\u56FA\u5B9A\u6700\u4F4E\u884C\u52A8\u7B49\u7EA7 20\u3001\u6BCF\u65E5\u5DF2\u89C2\u6D4B\u6210\u4EA4\u91CF\u81F3\u5C11 1,000\uFF0C\u4E0D\u8BBE\u4EF7\u5DEE\u6216\u8986\u76D6\u7387\u95E8\u69DB\u3002\u6BCF\u4E2A\u6280\u80FD\u6700\u591A 5 \u79CD\uFF1B\u7EFC\u5408\u8BC4\u5206 = \u5229\u6DA6\u6392\u540D 50% + \u5DF2\u89C2\u6D4B\u6210\u4EA4\u91CF\u6392\u540D 50%\u3002\u7EFC\u5408\u6307\u6570\u5BF9\u6240\u5C5E\u6280\u80FD\u7B49\u6743\u3002\u6BCF\u5929\u72EC\u7ACB\u9009\u54C1\uFF0C\u518D\u7528\u540C\u4E00\u7BEE\u5B50\u8BA1\u7B97\u5F53\u5929\u5F00\u9AD8\u4F4E\u6536\u3002"
+        "\u56FA\u5B9A\u6700\u4F4E\u884C\u52A8\u7B49\u7EA7 20\u3001\u6BCF\u65E5\u5DF2\u89C2\u6D4B\u6210\u4EA4\u91CF\u81F3\u5C11 10,000\uFF0C\u4E0D\u8BBE\u4EF7\u5DEE\u6216\u8986\u76D6\u7387\u95E8\u69DB\u3002\u6BCF\u4E2A\u884C\u4E1A\u6700\u591A 3 \u79CD\uFF0C\u6309\u65E5\u5747\u5229\u6DA6\u9009\u54C1\uFF1B\u4EC5\u51B2\u6CE1\u6309\u5229\u6DA6\u6392\u540D 50% + \u6210\u4EA4\u91CF\u6392\u540D 50% \u9009\u54C1\u3002\u7EFC\u5408\u6307\u6570\u4ECE\u6240\u5C5E\u884C\u4E1A\u5165\u9009\u54C1\u79CD\u4E2D\u6309\u65E5\u5747\u5229\u6DA6\u53D6\u524D 5 \u79CD\uFF0C\u54C1\u79CD\u7B49\u6743\uFF0C\u4E0D\u8DB3\u65F6\u6309\u5B9E\u9645\u6570\u91CF\u3002\u6BCF\u5929\u72EC\u7ACB\u9009\u54C1\uFF0C\u518D\u7528\u540C\u4E00\u7BEE\u5B50\u8BA1\u7B97\u5F53\u5929\u5F00\u9AD8\u4F4E\u6536\u3002"
       )
     );
     settings.append(
@@ -1213,9 +1213,7 @@ SOFTWARE.
           ch.querySelector(".value").textContent = money(b.mean) + " / \u65E5";
           stats.textContent = `${b.day} \xB7 \u5F00 ${money(b.open)}  \u9AD8 ${money(b.high)}  \u4F4E ${money(b.low)}  \u6536 ${money(b.close)} \xB7 \u65E5\u5747 ${money(b.mean)} \xB7 ${b.samples} \u4E2A\u6837\u672C${dayKey(b.last) === dayKey(Date.now() / 1e3) ? "\uFF08\u542B\u4ECA\u65E5\u672A\u5B8C\u6210\u6570\u636E\uFF09" : ""}${b.days ? " / " + b.days + " \u65E5" : ""}${b.samples === 1 ? "\uFF08\u5355\u6837\u672C\uFF0C\u65E0\u6CD5\u89C2\u6D4B\u65E5\u5185\u6CE2\u52A8\uFF09" : ""}`;
           const endDay = dayKey(b.last);
-          const members = GROUPS[key] ? GROUPS[key].skills.flatMap(
-            (s) => result.series[s].find((x) => x.day === endDay)?.members || []
-          ) : b.members;
+          const members = b.members;
           summary.textContent = `${endDay} \u6210\u5206\u4E0E${options.profile ? "\u89D2\u8272\u996E\u98DF" : "\u6700\u4F73\u996E\u98DF"}\uFF08${members.length} \u79CD\uFF09`;
           detailsTable(table, members);
         };

@@ -6,7 +6,7 @@ import { storage, loadHistory } from "./transport.js";
 import { renderChart, money } from "./chart.js";
 
 import { readPlayer } from "./player.js";
-const VERSION = "1.1.1";
+const VERSION = "1.2.0";
 function node(tag, attrs = {}, text) {
   const e = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
@@ -157,7 +157,7 @@ export function mount() {
     node(
       "p",
       { class: "muted" },
-      "固定最低行动等级 20、每日已观测成交量至少 1,000，不设价差或覆盖率门槛。每个技能最多 5 种；综合评分 = 利润排名 50% + 已观测成交量排名 50%。综合指数对所属技能等权。每天独立选品，再用同一篮子计算当天开高低收。",
+      "固定最低行动等级 20、每日已观测成交量至少 10,000，不设价差或覆盖率门槛。每个行业最多 3 种，按日均利润选品；仅冲泡按利润排名 50% + 成交量排名 50% 选品。综合指数从所属行业入选品种中按日均利润取前 5 种，品种等权，不足时按实际数量。每天独立选品，再用同一篮子计算当天开高低收。",
     ),
   );
   settings.append(
@@ -322,12 +322,7 @@ export function mount() {
         ch.querySelector(".value").textContent = money(b.mean) + " / 日";
         stats.textContent = `${b.day} · 开 ${money(b.open)}  高 ${money(b.high)}  低 ${money(b.low)}  收 ${money(b.close)} · 日均 ${money(b.mean)} · ${b.samples} 个样本${dayKey(b.last) === dayKey(Date.now() / 1000) ? "（含今日未完成数据）" : ""}${b.days ? " / " + b.days + " 日" : ""}${b.samples === 1 ? "（单样本，无法观测日内波动）" : ""}`;
         const endDay = dayKey(b.last);
-        const members = GROUPS[key]
-          ? GROUPS[key].skills.flatMap(
-              (s) =>
-                result.series[s].find((x) => x.day === endDay)?.members || [],
-            )
-          : b.members;
+        const members = b.members;
         summary.textContent = `${endDay} 成分与${options.profile ? "角色饮食" : "最佳饮食"}（${members.length} 种）`;
         detailsTable(table, members);
       }

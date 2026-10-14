@@ -128,6 +128,14 @@ try {
   await checkDetails(false, 3);
   await page.locator(".card summary").first().click();
   await checkDetails(true, 3);
+  for (const detail of await page.locator(".card details").all()) {
+    const count = await detail.locator("tbody tr").count();
+    assert.ok(count > 0 && count <= 5);
+    assert.match(
+      await detail.locator("summary").innerText(),
+      new RegExp(`（${count} 种）`),
+    );
+  }
   await page.getByRole("button", { name: "挤奶", exact: true }).click();
   await checkDetails(true, 1);
   await page.locator(".card summary").click();
@@ -246,6 +254,7 @@ try {
   await page.locator(".card summary").click();
   await checkDetails(true, 1);
   assert.ok((await page.locator("tbody tr").count()) > 0);
+  assert.ok((await page.locator("tbody tr").count()) <= 3);
   await page.getByRole("button", { name: "日线", exact: true }).click();
   await checkDetails(true, 1);
   await page.locator("svg g").first().focus();

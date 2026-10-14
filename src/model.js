@@ -19,8 +19,9 @@ export const GROUPS = {
 };
 export const DEFAULT_OPTIONS = Object.freeze({
   minLevel: 20,
-  minVolume: 1000,
-  top: 5,
+  minVolume: 10000,
+  top: 3,
+  compositeTop: 5,
   tax: 0.04,
 });
 const gathering = new Set(["milking", "foraging", "woodcutting"]);

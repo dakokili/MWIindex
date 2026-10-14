@@ -13,7 +13,7 @@ export function renderChart(container, bars, onSelect, period = "day") {
     const p = document.createElement("p");
     p.className = "empty";
     p.textContent =
-      "暂无符合筛选条件的数据。最低行动等级 20、日成交量至少 1,000；请检查角色等级和数据源状态。";
+      "暂无符合筛选条件的数据。最低行动等级 20、日成交量至少 10,000；请检查角色等级和数据源状态。";
     container.append(p);
     return;
   }

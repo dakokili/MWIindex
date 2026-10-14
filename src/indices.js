@@ -99,13 +99,32 @@ export function selectMembers(models, snapshots, options = DEFAULT_OPTIONS) {
   return rows
     .map((r) => ({
       ...r,
-      score: 0.5 * p.get(r) + 0.5 * v.get(r),
+      score: r.skill === "brewing" ? 0.5 * p.get(r) + 0.5 * v.get(r) : p.get(r),
     }))
     .sort(
       (a, b) =>
         b.score - a.score || b.profit - a.profit || a.id.localeCompare(b.id),
     )
     .slice(0, options.top);
+}
+export function selectCompositeMembers(members, options = DEFAULT_OPTIONS) {
+  // Skill percentile scores are not comparable across industries.
+  return [...members]
+    .sort((a, b) => b.profit - a.profit || a.id.localeCompare(b.id))
+    .slice(0, options.compositeTop);
+}
+function basketCandle(day, snapshots, members) {
+  const points = snapshots.flatMap((s, i) =>
+    members.length && members.every((m) => m.results[i])
+      ? [{ time: s.time, value: mean(members.map((m) => m.results[i].profit)) }]
+      : [],
+  );
+  const details = members.map(({ results, ...m }) => ({
+    ...m,
+    diet: results.filter(Boolean).at(-1)?.teaIds || [],
+    rareIncome: mean(results.filter(Boolean).map((r) => r.rareIncome)),
+  }));
+  return candle(day, points, details);
 }
 export async function buildIndices(
   data,
@@ -128,43 +147,23 @@ export async function buildIndices(
   }
   let done = 0;
   for (const [day, ss] of byDay) {
-    const points = {};
+    const baskets = {};
     for (const skill of Object.keys(SKILLS)) {
       const members = selectMembers(
         model.filter((m) => m.action.skill === skill),
         ss,
         options,
       );
-      points[skill] = ss.map((s, i) => ({
-        time: s.time,
-        value:
-          members.length && members.every((m) => m.results[i])
-            ? mean(members.map((m) => m.results[i].profit))
-            : null,
-      }));
-      const details = members.map(({ results, ...m }) => ({
-        ...m,
-        diet: results.filter(Boolean).at(-1)?.teaIds || [],
-        rareIncome: mean(results.filter(Boolean).map((r) => r.rareIncome)),
-      }));
-      const c = candle(
-        day,
-        points[skill].filter((p) => p.value !== null),
-        details,
-      );
+      baskets[skill] = members;
+      const c = basketCandle(day, ss, members);
       if (c) series[skill].push(c);
     }
     for (const [key, group] of Object.entries(GROUPS)) {
-      const ps = ss.map((s, i) => ({
-        time: s.time,
-        value: group.skills.every((k) => points[k][i].value !== null)
-          ? mean(group.skills.map((k) => points[k][i].value))
-          : null,
-      }));
-      const c = candle(
-        day,
-        ps.filter((p) => p.value !== null),
+      const members = selectCompositeMembers(
+        group.skills.flatMap((skill) => baskets[skill]),
+        options,
       );
+      const c = basketCandle(day, ss, members);
       if (c) series[key].push(c);
     }
     if (++done % 4 === 0) {

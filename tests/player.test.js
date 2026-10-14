@@ -132,7 +132,11 @@ test("actual daily constituents respect each skill level and do not substitute a
     profile,
   });
   assert.equal(result.series.milking.length, 0);
-  assert.equal(result.series.gathering.length, 0);
+  assert.ok(
+    result.series.gathering.every((b) =>
+      b.members.every((m) => m.skill !== "milking"),
+    ),
+  );
   let members = 0;
   for (const [skill, config] of Object.entries(profile.skills)) {
     for (const bar of result.series[skill])
