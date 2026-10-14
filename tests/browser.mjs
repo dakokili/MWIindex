@@ -5,6 +5,9 @@ import snapshots from "./fixtures/official-snapshots.json" with { type: "json" }
 import data from "../data/milkonomy.json" with { type: "json" };
 import { playerState } from "./player-fixture.js";
 import { requiredItems } from "../src/data.js";
+import { buildIndices } from "../src/indices.js";
+import { selectionChange, signedPercent } from "../src/performance.js";
+import { money } from "../src/chart.js";
 const items = requiredItems(data),
   latest = snapshots.at(-1).time;
 const payloads = {};
@@ -260,6 +263,66 @@ try {
   await page.locator("svg g").first().focus();
   await page.keyboard.press("Enter");
   assert.match(await page.locator(".stats").innerText(), /开 .*高 .*低 .*收/);
+  assert.match(await page.locator(".change").innerText(), /无前收/);
+  const expectedBars = (await buildIndices(data, snapshots)).series.foraging;
+  const candles = page.locator("svg g[data-candle]");
+  const lastIndex = expectedBars.length - 1;
+  async function checkChange(first, last) {
+    const expected = selectionChange(expectedBars, first, last);
+    assert.equal(
+      await page.locator(".value").innerText(),
+      money(expected.close) + " / 日",
+    );
+    const text = await page.locator(".change").innerText();
+    assert.ok(text.includes(expectedBars[Math.min(first, last)].day));
+    assert.ok(
+      text.includes(
+        `${expected.delta > 0 ? "+" : ""}${money(expected.delta)}（${signedPercent(expected.percent)}）`,
+      ),
+    );
+    assert.equal(
+      await page.locator(".value").getAttribute("class"),
+      `value ${expected.direction}`,
+    );
+    assert.equal(
+      await page.locator(".change").getAttribute("class"),
+      `change ${expected.direction}`,
+    );
+    const sizes = await page.locator(".quote").evaluate((el) => ({
+      big: parseFloat(getComputedStyle(el.querySelector(".value")).fontSize),
+      small: parseFloat(getComputedStyle(el.querySelector(".change")).fontSize),
+      color: getComputedStyle(el.querySelector(".value")).color,
+      changeColor: getComputedStyle(el.querySelector(".change")).color,
+    }));
+    assert.ok(sizes.small < sizes.big);
+    assert.equal(sizes.color, sizes.changeColor);
+    assert.equal(
+      await page.locator('svg g[aria-pressed="true"]').count(),
+      Math.abs(last - first) + 1,
+    );
+  }
+  await candles.nth(1).click();
+  await checkChange(1, 1);
+  await candles.nth(lastIndex).click({ modifiers: ["Shift"] });
+  await checkChange(1, lastIndex);
+  await page.getByRole("button", { name: "选取区间", exact: true }).click();
+  await candles.nth(lastIndex).click();
+  await candles.nth(1).click();
+  await checkChange(1, lastIndex);
+  await page.getByRole("button", { name: "全部范围", exact: true }).click();
+  assert.match(await page.locator(".change").innerText(), /无前收/);
+  assert.equal(
+    await page.locator('svg g[aria-pressed="true"]').count(),
+    expectedBars.length,
+  );
+  await candles.nth(1).focus();
+  await page.keyboard.press("Enter");
+  await candles.nth(lastIndex).focus();
+  await page.keyboard.press("Shift+Enter");
+  await checkChange(1, lastIndex);
+  await candles.nth(lastIndex).click();
+  await checkChange(lastIndex, lastIndex);
+
   await page.getByRole("button", { name: "综合指数", exact: true }).click();
   await page.keyboard.press("Escape");
   assert.equal(await page.locator("section.panel").isVisible(), false);

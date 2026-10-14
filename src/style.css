@@ -296,3 +296,36 @@ footer {
     font-size: 12px;
   }
 }
+.quote {
+  text-align: right;
+}
+.change {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  margin: 3px 0 0;
+}
+.up {
+  color: #f28d8d;
+}
+.down {
+  color: #54d6b0;
+}
+.flat {
+  color: #a6b4ca;
+}
+.chart-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+  font-size: 12px;
+}
+.chart-controls button {
+  padding: 4px 8px;
+  font-size: 12px;
+}
+.chart g[aria-pressed="true"] rect:first-child {
+  fill: #ffffff10;
+  stroke: #80d8cf66;
+}

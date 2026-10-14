@@ -17,6 +17,69 @@ export function renderChart(container, bars, onSelect, period = "day") {
     container.append(p);
     return;
   }
+  const controls = document.createElement("div");
+  controls.className = "chart-controls";
+  const rangeButton = document.createElement("button");
+  rangeButton.type = "button";
+  rangeButton.textContent = "选取区间";
+  rangeButton.setAttribute("aria-pressed", "false");
+  const allButton = document.createElement("button");
+  allButton.type = "button";
+  allButton.textContent = "全部范围";
+  const hint = document.createElement("span");
+  hint.className = "muted";
+  hint.textContent = "单击选单根；Shift + 单击选区间";
+  controls.append(rangeButton, allButton, hint);
+  container.append(controls);
+  let anchor = bars.length - 1,
+    rangeStart = null,
+    pickingRange = false;
+  const groups = [];
+  function notifySelection(start, end) {
+    const first = Math.min(start, end),
+      last = Math.max(start, end);
+    groups.forEach((g, i) =>
+      g.setAttribute("aria-pressed", String(i >= first && i <= last)),
+    );
+    onSelect(bars[last], { first, last, bars: bars.slice(first, last + 1) });
+  }
+  function endRange() {
+    pickingRange = false;
+    rangeStart = null;
+    rangeButton.textContent = "选取区间";
+    rangeButton.setAttribute("aria-pressed", "false");
+  }
+  function choose(index, extend = false) {
+    if (pickingRange) {
+      if (rangeStart === null) {
+        rangeStart = index;
+        anchor = index;
+        rangeButton.textContent = "请选择区间终点";
+        notifySelection(index, index);
+      } else {
+        const start = rangeStart;
+        endRange();
+        notifySelection(start, index);
+      }
+    } else {
+      if (!extend) anchor = index;
+      notifySelection(anchor, index);
+    }
+  }
+  rangeButton.addEventListener("click", () => {
+    if (pickingRange) endRange();
+    else {
+      pickingRange = true;
+      rangeStart = null;
+      rangeButton.textContent = "请选择区间起点";
+      rangeButton.setAttribute("aria-pressed", "true");
+    }
+  });
+  allButton.addEventListener("click", () => {
+    endRange();
+    anchor = 0;
+    notifySelection(0, bars.length - 1);
+  });
   const width = 760,
     height = 220,
     pad = { l: 78, r: 15, t: 14, b: 28 },
@@ -31,7 +94,7 @@ export function renderChart(container, bars, onSelect, period = "day") {
   const svg = svgEl("svg", {
     viewBox: `0 0 ${width} ${height}`,
     role: "img",
-    "aria-label": `${bars.length} 根利润K线，单位M每日（百万金币）；点击或键盘选择查看详情`,
+    "aria-label": `${bars.length} 根利润K线，单位M每日（百万金币）；点击或键盘选择；Shift 扩展选择范围`,
   });
   for (let i = 0; i <= 4; i++) {
     const value = lo + ((hi - lo) * i) / 4,
@@ -77,6 +140,8 @@ export function renderChart(container, bars, onSelect, period = "day") {
     const g = svgEl("g", {
       tabindex: 0,
       role: "button",
+      "data-candle": i,
+      "aria-pressed": String(i === bars.length - 1),
       "aria-label": `${b.day} 开 ${money(b.open)} 高 ${money(b.high)} 低 ${money(b.low)} 收 ${money(b.close)} 日均 ${money(b.mean)}`,
     });
     g.append(
@@ -111,12 +176,12 @@ export function renderChart(container, bars, onSelect, period = "day") {
         `${b.day}\n开 ${money(b.open)} · 高 ${money(b.high)} · 低 ${money(b.low)} · 收 ${money(b.close)}\n日均 ${money(b.mean)} · ${b.samples} 个实际样本`,
       ),
     );
-    const select = () => onSelect(b);
-    g.addEventListener("click", select);
+    groups.push(g);
+    g.addEventListener("click", (e) => choose(i, e.shiftKey));
     g.addEventListener("keydown", (e) => {
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
-        select();
+        choose(i, e.shiftKey);
       }
     });
     svg.append(g);

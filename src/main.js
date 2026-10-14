@@ -4,6 +4,7 @@ import { SKILLS, GROUPS, DEFAULT_OPTIONS } from "./model.js";
 import { buildIndices, aggregate, dayKey, DAY } from "./indices.js";
 import { storage, loadHistory } from "./transport.js";
 import { renderChart, money } from "./chart.js";
+import { selectionChange, signedPercent } from "./performance.js";
 
 import { readPlayer } from "./player.js";
 import { version as VERSION } from "../package.json";
@@ -187,7 +188,7 @@ export function mount() {
   const footer = node("footer");
   footer.append(
     document.createTextNode(
-      "红涨绿跌 · 点击K线查看当日/期末成分 · 北京时间分日，周一开周。成交量仅含已抓取小时，不外推完整日量。日均为观测样本均值。最近 60 天读取日内历史，更早的每日中位数不用于K线；本地可逐步积累 400 天。 ",
+      "报价红涨绿跌（按前收比较）· 单击K线或选择区间查看涨跌与期末成分 · 北京时间分日，周一开周。成交量仅含已抓取小时，不外推完整日量。日均为观测样本均值。最近 60 天读取日内历史，更早的每日中位数不用于K线；本地可逐步积累 400 天。 ",
     ),
   );
   footer.append(
@@ -288,21 +289,21 @@ export function mount() {
       cutoff = dayKey(latest - (range - 1) * DAY);
     info.textContent = `行情日期 ${dayKey(result.first)} — ${dayKey(result.last)} · 有效指数截至 ${dayKey(latest)} · ${source?.snapshots.length || 0} 个行情时点 · 历史缺口不补价`;
     for (const key of view === "overview" ? Object.keys(GROUPS) : [view]) {
-      const bars = aggregate(
-          result.series[key].filter((b) => b.day >= cutoff),
-          period,
-        ),
+      const allBars = aggregate(result.series[key], period),
+        bars = allBars.filter((b) => dayKey(b.last) >= cutoff),
+        offset = allBars.indexOf(bars[0]),
         last = bars.at(-1),
         card = node("article", { class: "card" });
       const ch = node("div", { class: "card-head" });
-      ch.append(
-        node("h2", {}, GROUPS[key]?.name || SKILLS[key]),
-        node(
+      const quote = node("div", { class: "quote" }),
+        value = node(
           "span",
-          { class: "value" },
-          last ? money(last.mean) + " / 日" : "—",
+          { class: "value flat", title: "所选周期末收盘利润指数" },
+          "—",
         ),
-      );
+        change = node("p", { class: "change flat", "aria-live": "polite" });
+      quote.append(value, change);
+      ch.append(node("h2", {}, GROUPS[key]?.name || SKILLS[key]), quote);
       card.append(ch);
       const stats = node("p", { class: "stats" }),
         chart = node("div", { class: "chart" }),
@@ -318,9 +319,39 @@ export function mount() {
         for (const other of cards.querySelectorAll(".card details"))
           other.open = detailsOpen;
       });
-      function select(b) {
-        ch.querySelector(".value").textContent = money(b.mean) + " / 日";
+      function select(
+        b,
+        selection = {
+          first: bars.length - 1,
+          last: bars.length - 1,
+          bars: [b],
+        },
+      ) {
+        const performance = selectionChange(
+          allBars,
+          offset + selection.first,
+          offset + selection.last,
+        );
+        const firstBar = selection.bars[0],
+          label =
+            selection.bars.length > 1
+              ? `${firstBar.day} — ${dayKey(b.last)}`
+              : `${b.day} ${period === "day" ? "日线" : period === "week" ? "周线" : "月线"}`;
+        value.textContent = money(b.close) + " / 日";
+        value.className = `value ${performance.direction}`;
+        change.className = `change ${performance.direction}`;
+        change.textContent =
+          performance.delta === null
+            ? `${label} · 涨跌 —（无前收）`
+            : `${label} · ${performance.delta > 0 ? "+" : ""}${money(performance.delta)}（${signedPercent(performance.percent)}）${performance.percent === null ? " · 前收为零" : ""}`;
+        change.title = performance.previous
+          ? `相对 ${performance.previous.day} 的收盘 ${money(performance.previous.close)}；百分比以此前收绝对值为分母。历史缺口不补价，使用前一可用周期。`
+          : "缺少所选首根之前的收盘数据，不使用开盘值代替。";
         stats.textContent = `${b.day} · 开 ${money(b.open)}  高 ${money(b.high)}  低 ${money(b.low)}  收 ${money(b.close)} · 日均 ${money(b.mean)} · ${b.samples} 个样本${dayKey(b.last) === dayKey(Date.now() / 1000) ? "（含今日未完成数据）" : ""}${b.days ? " / " + b.days + " 日" : ""}${b.samples === 1 ? "（单样本，无法观测日内波动）" : ""}`;
+        if (selection.bars.length > 1) {
+          const selected = selection.bars;
+          stats.textContent = `${label} · ${selected.length} 根K线 · 开 ${money(firstBar.open)}  高 ${money(Math.max(...selected.map((x) => x.high)))}  低 ${money(Math.min(...selected.map((x) => x.low)))}  收 ${money(b.close)} · ${selected.reduce((sum, x) => sum + x.samples, 0)} 个样本 · 成分见期末日期`;
+        }
         const endDay = dayKey(b.last);
         const members = b.members;
         summary.textContent = `${endDay} 成分与${options.profile ? "角色饮食" : "最佳饮食"}（${members.length} 种）`;
