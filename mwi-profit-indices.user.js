@@ -1,9 +1,11 @@
 // ==UserScript==
 // @name         MWI 银河生产利润指数
 // @namespace    https://github.com/dakokili/MWIindex
-// @version      1.2.0
+// @version      1.2.1
 // @description  三采、三制造、饮食与八个技能的税后利润指数，真实历史成交量，日周月K线。
 // @author       MWIindex contributors
+// @homepageURL  https://github.com/dakokili/MWIindex
+// @supportURL   https://github.com/dakokili/MWIindex/issues
 // @match        https://www.milkywayidle.com/*
 // @match        https://milkywayidle.com/*
 // @match        https://www.milkywayidlecn.com/*
@@ -16,6 +18,8 @@
 // @license      MIT
 // ==/UserScript==
 /* Includes Milkonomy-derived formulas and data, copyright (c) 2025 luyuhao.
+Source: https://github.com/Polokikiki/Milkonomy
+Snapshot: f0b9b315b70c0e2394be7ee1a57d2e9d86556d93
 MIT License
 
 Copyright (c) 2025 luyuhao
@@ -941,8 +945,10 @@ SOFTWARE.
     return normalizePlayer(findPlayerState(page, page.document), data);
   }
 
+  // package.json
+  var version = "1.2.1";
+
   // src/main.js
-  var VERSION = "1.2.0";
   function node(tag, attrs = {}, text) {
     const e = document.createElement(tag);
     for (const [k, v] of Object.entries(attrs)) {
@@ -1037,7 +1043,7 @@ SOFTWARE.
         [
           JSON.stringify(
             {
-              version: VERSION,
+              version,
               valueUnit: "coins/day",
               displayUnit: "M/day",
               ...result,

@@ -6,7 +6,7 @@ import { storage, loadHistory } from "./transport.js";
 import { renderChart, money } from "./chart.js";
 
 import { readPlayer } from "./player.js";
-const VERSION = "1.2.0";
+import { version as VERSION } from "../package.json";
 function node(tag, attrs = {}, text) {
   const e = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {

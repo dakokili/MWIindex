@@ -7,7 +7,9 @@
 ## 安装
 
 1. 浏览器安装 [Tampermonkey](https://www.tampermonkey.net/)；按扩展提示启用用户脚本权限。
-2. 将本仓库根目录的 **[mwi-profit-indices.user.js](./mwi-profit-indices.user.js)** 全部内容粘贴到 Tampermonkey 新建脚本，保存。
+2. 当前可点击 **[安装脚本](https://raw.githubusercontent.com/dakokili/MWIindex/main/mwi-profit-indices.user.js)**，在 Tampermonkey 弹窗确认安装；若扩展没有接管链接，可将根目录 `.user.js` 内容粘贴到新建脚本。
+
+Greasy Fork 的发布文件与同步说明已准备好，首次发布待所有者登录完成。步骤见 **[Greasy Fork 发布与自动更新](docs/greasyfork-publishing.md)**；发布后将这里替换为实际安装页链接。
 
 ## 使用
 
