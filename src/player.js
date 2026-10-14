@@ -15,6 +15,28 @@ const buffKeys = {
   artisan: "Artisan",
   gourmet: "Gourmet",
 };
+const buffSources = [
+  "equipment",
+  "house",
+  "community",
+  "achievement",
+  "personal",
+  "mooPass",
+  "guild",
+];
+// Game's message handlers rename server *Map fields to *Dict in React state.
+// Keep Map-only compatibility, but a present Dict (even empty/null) is authoritative.
+const stateAliases = Object.fromEntries(
+  [
+    ...buffSources.map((source) => `${source}ActionTypeBuffs`),
+    "actionTypeDrinkSlots",
+    "actionTypeFoodSlots",
+  ].map((field) => [`${field}Map`, `${field}Dict`]),
+);
+const readStateField = (state, key) =>
+  stateAliases[key] && Object.hasOwn(state || {}, stateAliases[key])
+    ? state[stateAliases[key]]
+    : state?.[key];
 const requiredFields = {
   character: "角色信息",
   characterSkillMap: "技能等级",
@@ -24,7 +46,7 @@ const requiredFields = {
   actionTypeDrinkSlotsMap: "饮品槽",
 };
 const missingFields = (state) =>
-  Object.keys(requiredFields).filter((key) => !state?.[key]);
+  Object.keys(requiredFields).filter((key) => !readStateField(state, key));
 
 // DOM Fibers can point at the previous render. Ascend to the root and use
 // FiberRoot.current, never alternate (which can contain an old character).
@@ -113,17 +135,9 @@ export function normalizePlayer(state, data) {
     const actionType = `/action_types/${skill}`;
     // Server-resolved equipment includes enhancement; house includes global room bonuses.
     // Consumable buffs are rebuilt from selected slots below, never added twice.
-    for (const source of [
-      "equipment",
-      "house",
-      "community",
-      "achievement",
-      "personal",
-      "mooPass",
-      "guild",
-    ]) {
+    for (const source of buffSources) {
       for (const buff of get(
-        state[`${source}ActionTypeBuffsMap`],
+        readStateField(state, `${source}ActionTypeBuffsMap`),
         actionType,
       ) || []) {
         const type = buff.typeHrid?.split("/").at(-1);
@@ -140,8 +154,10 @@ export function normalizePlayer(state, data) {
     }
     const diet = [];
     for (const kind of ["Drink", "Food"]) {
-      for (const slot of get(state[`actionType${kind}SlotsMap`], actionType) ||
-        []) {
+      for (const slot of get(
+        readStateField(state, `actionType${kind}SlotsMap`),
+        actionType,
+      ) || []) {
         if (!slot?.itemHrid) continue;
         const item = data.items[slot.itemHrid];
         if (!item?.consumable?.usableInActionTypeMap?.[actionType])

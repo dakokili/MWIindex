@@ -37,3 +37,9 @@
 旧读取器只识别 `__reactFiber$` / `__reactContainer$`，遗漏 React 16 的 `_reactRootContainer._internalRoot.current` 和 `__reactInternalInstance$`。在 Chromium 中用真正的 React 16.14.0 挂载带完整生产状态的组件，可重现已登录仍报「尚未读到完整角色数据」；这不是缺少技能或装备数据，而是没有找到组件。
 
 修复同时沿 DOM Fiber 的父链找到根的 `current`，避免从旧渲染树读取，并继续搜索完整候选。公开生态中的旧根结构也可见 [MWI Tools 的当前状态读取](https://github.com/YangLeda/Userscripts-For-MilkyWayIdle/blob/7941b4c6f4069820f5ec012fff5cd9b2eaecef60/src/features/procurement.js)。回归测试覆盖真实 React 挂载、移除根容器入口后的 DOM 标记回退、`setState` 换角色，以及旧引用/不完整状态；仅参考结构，未复制第三方实现。尚未使用反馈者的真实账号或浏览器复测。
+
+### 2026-10-14 实测字段映射修复（v1.3.2）
+
+维护者在 `www.milkywayidle.com` 已登录页面反馈 v1.3.1 仍提示「缺少：装备增益、房屋增益、饮品槽」，并提供只包含字段名/类型与消息处理函数片段的诊断。确认 `handleMessageInitCharacterData` 及各更新处理函数把服务器消息的 `equipmentActionTypeBuffsMap`、`houseActionTypeBuffsMap`、`actionTypeDrinkSlotsMap` 分别存入 React 状态的同名 `Dict` 字段；其余五类增益与食物槽也遵循此映射。`characterSkillMap` 和 `noncombatStats` 名称保持不变。
+
+v1.3.1 只解决了组件定位，测试数据曾误把消息字段当作页面状态字段。v1.3.2 以实测字段结构新增独立 fixture（全部数值为合成数据），在修复前复现同一错误，修复后覆盖全部七类增益、饮食槽、清空配置、旧 `Map` 兼容与避免重复计入汇总增益。浏览器测试同样改用 `Dict` 状态，并用 `setState` 替换配置对象验证重新读取。未保存维护者的角色名、属性值或账号数据；修复版仍需维护者游戏端复测。

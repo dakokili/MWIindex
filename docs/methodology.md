@@ -29,7 +29,7 @@
 
 ## 当前玩家模式
 
-点击「切换模式」读取当前挂载的游戏 React 组件；兼容 `mwi.game` / `mwi_common.game` 已暴露的实例，但不依赖它们。通过 `unsafeWindow` 只读 `characterSkillMap`、各技能饮食槽、`noncombatStats.drinkConcentration` 和服务器已计算的 `equipment/house/community/achievement/personal/mooPass/guildActionTypeBuffsMap`。装备增益已包含实际强化等级，房屋增益已包含全局房间效果，不能再叠加默认装备或默认房屋。当前所选饮食单独按配方加浓度计算，避免与 `consumableActionTypeBuffsMap` 重复计算。
+点击「切换模式」读取当前挂载的游戏 React 组件；兼容 `mwi.game` / `mwi_common.game` 已暴露的实例，但不依赖它们。通过 `unsafeWindow` 只读 `characterSkillMap`、`actionTypeDrinkSlotsDict` / `actionTypeFoodSlotsDict`、`noncombatStats.drinkConcentration` 和服务器已计算的 `equipment/house/community/achievement/personal/mooPass/guildActionTypeBuffsDict`。游戏处理函数将消息中的 `…Map` 改名为页面状态中的 `…Dict`；读取器优先使用 `Dict`，仅在该字段不存在时兼容 `Map`。装备增益已包含实际强化等级，房屋增益已包含全局房间效果，不能再叠加默认装备或默认房屋。当前所选饮食单独按配方加浓度计算，不再叠加 `consumableActionTypeBuffsDict` 或已汇总的 `skillingActionTypeBuffsDict`。
 
 只保留角色名、配置读取时间、技能等级、生产增益与饮食 ID，不读取或保存账号凭据，不拦截 WebSocket、不发送游戏请求。切换模式或点击「更新装备数据」时重新读取；页面显示配置读取时间。饮食按当前选择固定使用（包括经验茶成本），假定持续补充；不按库存数量限制生产，也不改成最佳饮食。战斗专用食品不参与生活指数。暂时性增益按读取时的配置冻结用于整段历史回算；不预测到期、不模拟任务触发的专属增益。
 

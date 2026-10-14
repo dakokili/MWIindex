@@ -4,7 +4,7 @@ import data from "../data/milkonomy.json" with { type: "json" };
 import { findPlayerState, normalizePlayer } from "../src/player.js";
 import { compileModel, candidates, DEFAULT_OPTIONS } from "../src/model.js";
 import { money } from "../src/chart.js";
-import { playerState } from "./player-fixture.js";
+import { playerState, livePlayerState } from "./player-fixture.js";
 
 test("all finite profits display in millions, including losses and small values", () => {
   assert.equal(money(1250000), "1.25M");
@@ -147,6 +147,75 @@ test("incomplete candidates do not hide complete state; diagnostics name missing
   fiber.child = null;
   assert.equal(findPlayerState(page, { getElementById: () => root }), partial);
   assert.throws(() => normalizePlayer(partial, data), /缺少：非战斗属性/);
+});
+
+test("reported missing production fields are not silently treated as no equipment, house or drinks", () => {
+  const state = playerState();
+  delete state.equipmentActionTypeBuffsMap;
+  delete state.houseActionTypeBuffsMap;
+  delete state.actionTypeDrinkSlotsMap;
+  const root = {
+    children: [],
+    _reactRootContainer: {
+      _internalRoot: { current: { child: { stateNode: { state } } } },
+    },
+  };
+  assert.throws(
+    () =>
+      normalizePlayer(
+        findPlayerState({}, { getElementById: () => root }),
+        data,
+      ),
+    /缺少：装备增益、房屋增益、饮品槽/,
+  );
+});
+
+test("live Dict fields include every buff source and selected slots without counting aggregate or consumable buffs twice", () => {
+  const state = livePlayerState();
+  const root = {
+    children: [],
+    _reactRootContainer: {
+      _internalRoot: { current: { child: { stateNode: { state } } } },
+    },
+  };
+  assert.equal(findPlayerState({}, { getElementById: () => root }), state);
+  assert.equal(findPlayerState({ mwi: { game: { state } } }, {}), state);
+  const profile = normalizePlayer(state, data);
+  const skill = profile.skills.milking;
+  assert.equal(skill.level, 100);
+  assert.equal(skill.buffs.Speed, 0.53);
+  assert.equal(skill.buffs.Efficiency, 0.13);
+  assert.equal(skill.buffs.RareFind, 0.12);
+  assert.equal(skill.buffs.EssenceFind, 0.05);
+  assert.equal(skill.buffs.Level, 2);
+  assert.equal(skill.buffs.concentration, 0.2);
+  assert.deepEqual(skill.diet, ["/items/efficiency_tea"]);
+  const variant = compileModel(data, { ...DEFAULT_OPTIONS, profile }).find(
+    (m) => m.action.id.endsWith("/holy_cow"),
+  ).variants[0];
+  assert.ok(variant.actionsPH > 0);
+  assert.deepEqual(variant.teaIds, ["/items/efficiency_tea"]);
+  // Food slots have the same verified renaming as drinks (synthetic valid slot).
+  state.actionTypeDrinkSlotsDict = {};
+  state.actionTypeFoodSlotsDict = {
+    "/action_types/milking": [{ itemHrid: "/items/efficiency_tea" }],
+  };
+  assert.deepEqual(normalizePlayer(state, data).skills.milking.diet, [
+    "/items/efficiency_tea",
+  ]);
+});
+
+test("live Dict values take precedence over stale Map aliases, including empty and unloaded data", () => {
+  const state = { ...playerState(), ...livePlayerState() };
+  state.equipmentActionTypeBuffsDict = {};
+  state.houseActionTypeBuffsDict = {};
+  state.actionTypeDrinkSlotsDict = {};
+  const profile = normalizePlayer(state, data);
+  assert.equal(profile.skills.milking.buffs.Speed, 0.03);
+  assert.equal(profile.skills.milking.buffs.RareFind, 0.04);
+  assert.deepEqual(profile.skills.milking.diet, []);
+  state.equipmentActionTypeBuffsDict = null;
+  assert.throws(() => normalizePlayer(state, data), /缺少：装备增益/);
 });
 
 test("every skill excludes recipes one level above the player and includes the exact unlock level", () => {

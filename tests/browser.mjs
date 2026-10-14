@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import assert from "node:assert/strict";
 import snapshots from "./fixtures/official-snapshots.json" with { type: "json" };
 import data from "../data/milkonomy.json" with { type: "json" };
-import { playerState } from "./player-fixture.js";
+import { livePlayerState } from "./player-fixture.js";
 import { requiredItems } from "../src/data.js";
 import { buildIndices } from "../src/indices.js";
 import { selectionChange, signedPercent } from "../src/performance.js";
@@ -187,7 +187,7 @@ try {
       }
     }
     window.fixtureGame = ReactDOM.render(React.createElement(Game), root);
-  }, playerState());
+  }, livePlayerState());
   await mode.click();
   await page.waitForFunction(() =>
     [
@@ -208,6 +208,30 @@ try {
   );
   assert.match(await page.locator("header .muted").innerText(), /测试角色/);
   await checkDetails(true, 3);
+  // Match live handlers: replace Dict objects on equipment/house/slot updates.
+  const withEquipment = await page.locator(".value").allTextContents();
+  await page.evaluate(() =>
+    window.fixtureGame.setState({
+      equipmentActionTypeBuffsDict: {},
+      houseActionTypeBuffsDict: {},
+      actionTypeDrinkSlotsDict: {},
+    }),
+  );
+  await page.getByRole("button", { name: "更新装备数据", exact: true }).click();
+  await page.waitForFunction(() =>
+    [
+      ...document
+        .getElementById("mwi-profit-index-host")
+        .shadowRoot.querySelectorAll("button"),
+    ].some(
+      (button) => button.textContent === "更新装备数据" && !button.disabled,
+    ),
+  );
+  assert.doesNotMatch(await page.locator(".status").innerText(), /更新失败/);
+  assert.notDeepEqual(
+    await page.locator(".value").allTextContents(),
+    withEquipment,
+  );
   assert.equal(
     await page
       .getByRole("button", { name: "更新装备数据", exact: true })

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MWI 银河生产利润指数
 // @namespace    https://github.com/dakokili/MWIindex
-// @version      1.3.1
+// @version      1.3.2
 // @description  三采、三制造、饮食与八个技能的税后利润指数，真实历史成交量，日周月K线。
 // @author       MWIindex contributors
 // @homepageURL  https://github.com/dakokili/MWIindex
@@ -928,6 +928,23 @@ SOFTWARE.
     artisan: "Artisan",
     gourmet: "Gourmet"
   };
+  var buffSources = [
+    "equipment",
+    "house",
+    "community",
+    "achievement",
+    "personal",
+    "mooPass",
+    "guild"
+  ];
+  var stateAliases = Object.fromEntries(
+    [
+      ...buffSources.map((source) => `${source}ActionTypeBuffs`),
+      "actionTypeDrinkSlots",
+      "actionTypeFoodSlots"
+    ].map((field) => [`${field}Map`, `${field}Dict`])
+  );
+  var readStateField = (state, key) => stateAliases[key] && Object.hasOwn(state || {}, stateAliases[key]) ? state[stateAliases[key]] : state?.[key];
   var requiredFields = {
     character: "\u89D2\u8272\u4FE1\u606F",
     characterSkillMap: "\u6280\u80FD\u7B49\u7EA7",
@@ -936,7 +953,7 @@ SOFTWARE.
     houseActionTypeBuffsMap: "\u623F\u5C4B\u589E\u76CA",
     actionTypeDrinkSlotsMap: "\u996E\u54C1\u69FD"
   };
-  var missingFields = (state) => Object.keys(requiredFields).filter((key) => !state?.[key]);
+  var missingFields = (state) => Object.keys(requiredFields).filter((key) => !readStateField(state, key));
   function currentTree(fiber) {
     const seen = /* @__PURE__ */ new Set();
     while (fiber?.return && !seen.has(fiber) && seen.size < 250) {
@@ -1005,17 +1022,9 @@ SOFTWARE.
         concentration: state.noncombatStats.drinkConcentration || 0
       };
       const actionType = `/action_types/${skill}`;
-      for (const source of [
-        "equipment",
-        "house",
-        "community",
-        "achievement",
-        "personal",
-        "mooPass",
-        "guild"
-      ]) {
+      for (const source of buffSources) {
         for (const buff of get(
-          state[`${source}ActionTypeBuffsMap`],
+          readStateField(state, `${source}ActionTypeBuffsMap`),
           actionType
         ) || []) {
           const type = buff.typeHrid?.split("/").at(-1);
@@ -1029,7 +1038,10 @@ SOFTWARE.
       }
       const diet = [];
       for (const kind of ["Drink", "Food"]) {
-        for (const slot of get(state[`actionType${kind}SlotsMap`], actionType) || []) {
+        for (const slot of get(
+          readStateField(state, `actionType${kind}SlotsMap`),
+          actionType
+        ) || []) {
           if (!slot?.itemHrid) continue;
           const item = data.items[slot.itemHrid];
           if (!item?.consumable?.usableInActionTypeMap?.[actionType])
@@ -1051,7 +1063,7 @@ SOFTWARE.
   }
 
   // package.json
-  var version = "1.3.1";
+  var version = "1.3.2";
 
   // src/main.js
   function node(tag, attrs = {}, text) {
