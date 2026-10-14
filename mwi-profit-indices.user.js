@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MWI 银河生产利润指数
 // @namespace    https://github.com/dakokili/MWIindex
-// @version      1.0.0
+// @version      1.1.0
 // @description  三采、三制造、饮食与八个技能的税后利润指数，真实历史成交量，日周月K线。
 // @author       MWIindex contributors
 // @match        https://www.milkywayidle.com/*
@@ -10,8 +10,7 @@
 // @match        https://milkywayidlecn.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
-// @grant        GM_getValue
-// @grant        GM_setValue
+// @grant        unsafeWindow
 // @connect      raw.githubusercontent.com
 // @noframes
 // @license      MIT
@@ -68,19 +67,16 @@ SOFTWARE.
   };
   var DEFAULT_OPTIONS = Object.freeze({
     minLevel: 20,
-    maxSpread: 0.2,
-    minCoverage: 0.8,
     minVolume: 1e3,
     top: 5,
-    tax: 0.04,
-    requireVolume: true
+    tax: 0.04
   });
   var gathering = /* @__PURE__ */ new Set(["milking", "foraging", "woodcutting"]);
   var COIN = "/items/coin";
   var mean = (a) => a.reduce((s, x) => s + x, 0) / a.length;
   function candidates(data, options = DEFAULT_OPTIONS) {
     return data.actions.filter((a) => {
-      if (!SKILLS[a.skill] || a.level < options.minLevel || a.level > data.defaults.level || a.upgrade)
+      if (!SKILLS[a.skill] || a.level < DEFAULT_OPTIONS.minLevel || a.level > (options.profile?.skills[a.skill]?.level ?? data.defaults.level) || a.upgrade)
         return false;
       const outputs = gathering.has(a.skill) ? a.drops : a.outputs;
       return outputs.length === 1 && outputs.every((o) => {
@@ -89,7 +85,8 @@ SOFTWARE.
       });
     });
   }
-  function baseBuffs(data, skill) {
+  function baseBuffs(data, skill, profile) {
+    if (profile) return { ...profile.skills[skill].buffs };
     const b = {
       Level: 0,
       Speed: 0,
@@ -147,8 +144,8 @@ SOFTWARE.
     return result;
   }
   function compileVariant(data, action, teaIds, options = DEFAULT_OPTIONS) {
-    const b = baseBuffs(data, action.skill);
-    const buffKeys = {
+    const b = baseBuffs(data, action.skill, options.profile);
+    const buffKeys2 = {
       efficiency: "Efficiency",
       artisan: "Artisan",
       gourmet: "Gourmet",
@@ -161,9 +158,12 @@ SOFTWARE.
         const type = buff.typeHrid.split("/").at(-1), scale = 1 + b.concentration;
         if (type === `${action.skill}_level`) b.Level += buff.flatBoost * scale;
         else if (type === "action_level") b.Level -= buff.flatBoost * scale;
-        else if (buffKeys[type]) b[buffKeys[type]] += buff.flatBoost * scale;
+        else if (buffKeys2[type]) b[buffKeys2[type]] += buff.flatBoost * scale;
       }
-    const efficiency = 1 + Math.max(0, (data.defaults.level + b.Level - action.level) * 0.01) + b.Efficiency;
+    const efficiency = 1 + Math.max(
+      0,
+      ((options.profile?.skills[action.skill].level ?? data.defaults.level) + b.Level - action.level) * 0.01
+    ) + b.Efficiency;
     const actionsPH = 3600 / Math.max(3, action.seconds / (1 + b.Speed)) * efficiency;
     const inputs = [], outputs = [];
     const addOutput = (id, count, rare = false, taxFactor = id === COIN ? 1 : 1 - options.tax, depth = 0) => {
@@ -219,7 +219,10 @@ SOFTWARE.
     for (const d of action.rare)
       addOutput(d.itemHrid, d.maxCount * d.dropRate * (1 + b.RareFind), true);
     for (const id of teaIds)
-      inputs.push({ id, rate: 12 * (1 + b.concentration) });
+      inputs.push({
+        id,
+        rate: 36e11 / (data.items[id].consumable.buffs[0]?.duration || 3e11) * (1 + b.concentration)
+      });
     return {
       teaIds,
       inputs: inputs.filter((x) => x.rate > 0),
@@ -252,7 +255,10 @@ SOFTWARE.
   }
   function compileModel(data, options = DEFAULT_OPTIONS) {
     const dietMap = Object.fromEntries(
-      Object.keys(SKILLS).map((s) => [s, diets(data, s)])
+      Object.keys(SKILLS).map((s) => [
+        s,
+        options.profile ? [options.profile.skills[s].diet] : diets(data, s)
+      ])
     );
     return candidates(data, options).map((action) => ({
       action,
@@ -288,15 +294,15 @@ SOFTWARE.
   function candle(day, points, members = []) {
     const sorted = [...points].sort((a, b) => a.time - b.time);
     if (!sorted.length) return null;
-    const values = sorted.map((p) => p.value);
+    const values2 = sorted.map((p) => p.value);
     return {
       day,
-      open: values[0],
-      high: Math.max(...values),
-      low: Math.min(...values),
-      close: values.at(-1),
-      mean: mean(values),
-      samples: values.length,
+      open: values2[0],
+      high: Math.max(...values2),
+      low: Math.min(...values2),
+      close: values2.at(-1),
+      mean: mean(values2),
+      samples: values2.length,
       first: sorted[0].time,
       last: sorted.at(-1).time,
       members
@@ -341,38 +347,25 @@ SOFTWARE.
     const rows = [];
     for (const model of models) {
       const quotes = snapshots.map((s) => s.prices[model.main]);
-      const validQuotes = quotes.filter(
-        (q) => q?.ask > 0 && q.bid > 0 && q.ask >= q.bid
-      );
-      const coverage = validQuotes.length / snapshots.length;
-      if (coverage < options.minCoverage) continue;
-      const spread = mean(
-        validQuotes.map((q) => (q.ask - q.bid) / ((q.ask + q.bid) / 2))
-      );
-      if (spread > options.maxSpread) continue;
-      const volumes = validQuotes.map((q) => q.volume).filter((v2) => Number.isFinite(v2) && v2 >= 0);
-      const volume = volumes.length ? volumes.reduce((s, v2) => s + v2, 0) : null;
-      if (options.requireVolume && volume === null) continue;
-      if (volume !== null && volume < options.minVolume) continue;
+      const volumes = quotes.map((q) => q?.volume).filter((v2) => Number.isFinite(v2) && v2 >= 0);
+      const volume = volumes.reduce((sum, v2) => sum + v2, 0);
+      if (!volumes.length || volume < DEFAULT_OPTIONS.minVolume) continue;
       const results = snapshots.map((s) => bestProfit(model, s));
       const valid = results.filter(Boolean);
-      if (valid.length / snapshots.length < options.minCoverage) continue;
+      if (!valid.length) continue;
       rows.push({
         id: model.action.id,
         main: model.main,
         skill: model.action.skill,
         profit: mean(valid.map((r) => r.profit)),
-        coverage,
-        spread,
         volume,
-        liquidity: coverage * (1 - spread),
         results
       });
     }
-    const p = ranks(rows, (r) => r.profit), l = ranks(rows, (r) => r.liquidity), v = ranks(rows, (r) => r.volume === null ? 0 : r.volume);
+    const p = ranks(rows, (r) => r.profit), v = ranks(rows, (r) => r.volume === null ? 0 : r.volume);
     return rows.map((r) => ({
       ...r,
-      score: 0.5 * p.get(r) + 0.25 * l.get(r) + 0.25 * v.get(r)
+      score: 0.5 * p.get(r) + 0.5 * v.get(r)
     })).sort(
       (a, b) => b.score - a.score || b.profit - a.profit || a.id.localeCompare(b.id)
     ).slice(0, options.top);
@@ -693,7 +686,7 @@ SOFTWARE.
   }
 
   // src/chart.js
-  var money = (n) => Number.isFinite(n) ? Math.abs(n) >= 1e8 ? (n / 1e8).toFixed(2) + " \u4EBF" : Math.abs(n) >= 1e4 ? (n / 1e4).toFixed(2) + " \u4E07" : n.toFixed(0) : "\u2014";
+  var money = (n) => Number.isFinite(n) ? (n / 1e6).toFixed(2) + "M" : "\u2014";
   var NS = "http://www.w3.org/2000/svg";
   function svgEl(tag, attrs = {}, text) {
     const e = document.createElementNS(NS, tag);
@@ -706,7 +699,7 @@ SOFTWARE.
     if (!bars.length) {
       const p = document.createElement("p");
       p.className = "empty";
-      p.textContent = "\u6682\u65E0\u7B26\u5408\u7B5B\u9009\u6761\u4EF6\u7684\u6570\u636E\u3002\u53EF\u68C0\u67E5\u6210\u4EA4\u91CF\u95E8\u69DB\u3001\u62A5\u4EF7\u8986\u76D6\u7387\u4E0E\u6570\u636E\u6E90\u72B6\u6001\u3002";
+      p.textContent = "\u6682\u65E0\u7B26\u5408\u7B5B\u9009\u6761\u4EF6\u7684\u6570\u636E\u3002\u6700\u4F4E\u884C\u52A8\u7B49\u7EA7 20\u3001\u65E5\u6210\u4EA4\u91CF\u81F3\u5C11 1,000\uFF1B\u8BF7\u68C0\u67E5\u89D2\u8272\u7B49\u7EA7\u548C\u6570\u636E\u6E90\u72B6\u6001\u3002";
       container.append(p);
       return;
     }
@@ -717,7 +710,7 @@ SOFTWARE.
     const svg = svgEl("svg", {
       viewBox: `0 0 ${width} ${height}`,
       role: "img",
-      "aria-label": `${bars.length} \u6839\u5229\u6DA6K\u7EBF\uFF0C\u5355\u4F4D\u91D1\u5E01\u6BCF\u65E5\uFF1B\u70B9\u51FB\u6216\u952E\u76D8\u9009\u62E9\u67E5\u770B\u8BE6\u60C5`
+      "aria-label": `${bars.length} \u6839\u5229\u6DA6K\u7EBF\uFF0C\u5355\u4F4DM\u6BCF\u65E5\uFF08\u767E\u4E07\u91D1\u5E01\uFF09\uFF1B\u70B9\u51FB\u6216\u952E\u76D8\u9009\u62E9\u67E5\u770B\u8BE6\u60C5`
     });
     for (let i = 0; i <= 4; i++) {
       const value = lo + (hi - lo) * i / 4, yy = y(value);
@@ -838,8 +831,118 @@ SOFTWARE.
     container.append(svg);
   }
 
+  // src/player.js
+  var get = (map, key) => typeof map?.get === "function" ? map.get(key) : map?.[key];
+  var values = (map) => typeof map?.values === "function" ? [...map.values()] : Object.values(map || {});
+  var buffKeys = {
+    efficiency: "Efficiency",
+    action_speed: "Speed",
+    rare_find: "RareFind",
+    essence_find: "EssenceFind",
+    gathering: "Gathering",
+    processing: "Processing",
+    artisan: "Artisan",
+    gourmet: "Gourmet"
+  };
+  function findPlayerState(page, doc) {
+    for (const game of [page.mwi?.game, page.mwi_common?.game]) {
+      if (game?.state?.character && game.state.characterSkillMap)
+        return game.state;
+    }
+    const root = doc.getElementById("root");
+    if (!root) return null;
+    const stack = [];
+    for (const el of [root, ...root.children]) {
+      for (const key of Object.keys(el)) {
+        if (key.startsWith("__reactFiber$")) stack.push(el[key]);
+        if (key.startsWith("__reactContainer$"))
+          stack.push(el[key].stateNode?.current || el[key]);
+      }
+    }
+    const seen = /* @__PURE__ */ new Set();
+    while (stack.length && seen.size < 5e4) {
+      const fiber = stack.pop();
+      if (!fiber || seen.has(fiber)) continue;
+      seen.add(fiber);
+      const state = fiber.stateNode?.state;
+      if (state?.character && state.characterSkillMap && state.equipmentActionTypeBuffsMap)
+        return state;
+      stack.push(fiber.child, fiber.sibling);
+    }
+    return null;
+  }
+  function normalizePlayer(state, data) {
+    if (!state?.character || !state.characterSkillMap || !state.noncombatStats || !state.equipmentActionTypeBuffsMap || !state.houseActionTypeBuffsMap || !state.actionTypeDrinkSlotsMap)
+      throw new Error(
+        "\u5C1A\u672A\u8BFB\u5230\u5B8C\u6574\u89D2\u8272\u6570\u636E\uFF0C\u8BF7\u8FDB\u5165\u6E38\u620F\u540E\u91CD\u8BD5\uFF1B\u82E5\u5DF2\u767B\u5F55\uFF0C\u8BF7\u5237\u65B0\u6E38\u620F\u9875\u9762\u3002"
+      );
+    const skills = {};
+    for (const skill of Object.keys(SKILLS)) {
+      const level = values(state.characterSkillMap).find(
+        (s) => s.skillHrid === `/skills/${skill}`
+      )?.level;
+      if (!Number.isFinite(level) || level < 1)
+        throw new Error(`\u65E0\u6CD5\u8BFB\u53D6${SKILLS[skill]}\u7B49\u7EA7`);
+      const buffs = {
+        Level: 0,
+        Speed: 0,
+        Efficiency: 0,
+        RareFind: 0,
+        EssenceFind: 0,
+        Gathering: 0,
+        Processing: 0,
+        Artisan: 0,
+        Gourmet: 0,
+        concentration: state.noncombatStats.drinkConcentration || 0
+      };
+      const actionType = `/action_types/${skill}`;
+      for (const source of [
+        "equipment",
+        "house",
+        "community",
+        "achievement",
+        "personal",
+        "mooPass",
+        "guild"
+      ]) {
+        for (const buff of get(
+          state[`${source}ActionTypeBuffsMap`],
+          actionType
+        ) || []) {
+          const type = buff.typeHrid?.split("/").at(-1);
+          const key = type === `${skill}_level` || type === "action_level" ? "Level" : buffKeys[type];
+          if (!key) continue;
+          if (buff.ratioBoost) throw new Error(`\u6682\u4E0D\u652F\u6301\u89D2\u8272\u7684\u6BD4\u4F8B\u589E\u76CA\uFF1A${type}`);
+          if (!Number.isFinite(buff.flatBoost))
+            throw new Error(`\u89D2\u8272\u589E\u76CA\u6570\u636E\u4E0D\u5B8C\u6574\uFF1A${type}`);
+          buffs[key] += buff.flatBoost * (type === "action_level" ? -1 : 1);
+        }
+      }
+      const diet = [];
+      for (const kind of ["Drink", "Food"]) {
+        for (const slot of get(state[`actionType${kind}SlotsMap`], actionType) || []) {
+          if (!slot?.itemHrid) continue;
+          const item = data.items[slot.itemHrid];
+          if (!item?.consumable?.usableInActionTypeMap?.[actionType])
+            throw new Error(`\u89C4\u5219\u5FEB\u7167\u672A\u5305\u542B\u5F53\u524D\u996E\u98DF\uFF1A${slot.itemHrid}`);
+          diet.push(slot.itemHrid);
+        }
+      }
+      skills[skill] = { level, buffs, diet };
+    }
+    return {
+      name: String(state.character.name || "\u5F53\u524D\u89D2\u8272"),
+      capturedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      skills
+    };
+  }
+  function readPlayer(data) {
+    const page = typeof unsafeWindow === "undefined" ? window : unsafeWindow;
+    return normalizePlayer(findPlayerState(page, page.document), data);
+  }
+
   // src/main.js
-  var VERSION = "1.0.0";
+  var VERSION = "1.1.0";
   function node(tag, attrs = {}, text) {
     const e = document.createElement(tag);
     for (const [k, v] of Object.entries(attrs)) {
@@ -854,19 +957,6 @@ SOFTWARE.
     e.addEventListener("click", fn);
     return e;
   }
-  function safeOptions() {
-    try {
-      const o = GM_getValue("options", {});
-      return {
-        ...DEFAULT_OPTIONS,
-        ...Object.fromEntries(
-          Object.keys(DEFAULT_OPTIONS).filter((k) => typeof o[k] === typeof DEFAULT_OPTIONS[k]).map((k) => [k, o[k]])
-        )
-      };
-    } catch {
-      return { ...DEFAULT_OPTIONS };
-    }
-  }
   function mount() {
     if (document.getElementById("mwi-profit-index-host")) return;
     const host = node("div", { id: "mwi-profit-index-host" });
@@ -874,7 +964,7 @@ SOFTWARE.
     const shadow = host.attachShadow({ mode: "open" });
     shadow.append(node("style", {}, style_default));
     const cache = storage();
-    let result = null, source = null, busy = false, period = "day", view = "overview", range = 60, options = safeOptions();
+    let result = null, source = null, busy = false, period = "day", view = "overview", range = 60, options = { ...DEFAULT_OPTIONS };
     const panel = node("section", {
       class: "panel",
       hidden: "",
@@ -890,14 +980,15 @@ SOFTWARE.
     shadow.append(launch, panel);
     const header = node("header");
     const title = node("div");
+    const subtitle = node(
+      "p",
+      { class: "muted" },
+      "\u9ED8\u8BA4\u914D\u88C5 \xB7 \u6700\u4F73\u996E\u98DF \xB7 \u7A0E\u540E\u671F\u671B\u6536\u76CA / M\u6BCF\u65E5\uFF08\u767E\u4E07\u91D1\u5E01\uFF09"
+    );
     title.append(
       node("p", { class: "eyebrow" }, "MILKY WAY IDLE \xB7 MARKET INDICES"),
       node("h1", {}, "\u94F6\u6CB3\u751F\u4EA7 \xB7 \u5229\u6DA6\u6307\u6570"),
-      node(
-        "p",
-        { class: "muted" },
-        "\u9ED8\u8BA4\u914D\u88C5 \xB7 \u6700\u4F73\u996E\u98DF \xB7 \u7A0E\u540E\u671F\u671B\u6536\u76CA / \u91D1\u5E01\u6BCF\u65E5"
-      )
+      subtitle
     );
     header.append(
       title,
@@ -930,6 +1021,10 @@ SOFTWARE.
       render();
     });
     const refresh = button("\u5237\u65B0\u884C\u60C5", () => refreshData(true));
+    const modeBtn = button(
+      "\u5207\u6362\u6A21\u5F0F\uFF1A\u9ED8\u8BA4\u914D\u88C5",
+      () => refreshData(false, !options.profile)
+    );
     const exportBtn = button("\u5BFC\u51FA JSON", () => {
       if (!result) return;
       const blob = new Blob(
@@ -937,6 +1032,8 @@ SOFTWARE.
           JSON.stringify(
             {
               version: VERSION,
+              valueUnit: "coins/day",
+              displayUnit: "M/day",
               ...result,
               dataSource: source?.manifestTime,
               warnings: source?.warnings
@@ -951,7 +1048,7 @@ SOFTWARE.
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 1e3);
     });
-    toolbar.append(segments, rangeSelect, refresh, exportBtn);
+    toolbar.append(segments, rangeSelect, modeBtn, refresh, exportBtn);
     panel.append(toolbar);
     const tabs = node("div", { class: "tabs" });
     for (const [k, label] of [
@@ -976,59 +1073,16 @@ SOFTWARE.
       node(
         "p",
         { class: "muted" },
-        "\u6BCF\u4E2A\u6280\u80FD\u6700\u591A 5 \u79CD\uFF1B\u7EFC\u5408\u8BC4\u5206 = \u5229\u6DA6\u6392\u540D 50% + \u5DF2\u89C2\u6D4B\u6210\u4EA4\u91CF\u6392\u540D 25% + \u53CC\u8FB9\u62A5\u4EF7\u8D28\u91CF\u6392\u540D 25%\u3002\u7EFC\u5408\u6307\u6570\u5BF9\u6240\u5C5E\u6280\u80FD\u7B49\u6743\u3002\u6BCF\u5929\u72EC\u7ACB\u9009\u54C1\uFF0C\u518D\u7528\u540C\u4E00\u7BEE\u5B50\u8BA1\u7B97\u5F53\u5929\u5F00\u9AD8\u4F4E\u6536\u3002"
+        "\u56FA\u5B9A\u6700\u4F4E\u884C\u52A8\u7B49\u7EA7 20\u3001\u6BCF\u65E5\u5DF2\u89C2\u6D4B\u6210\u4EA4\u91CF\u81F3\u5C11 1,000\uFF0C\u4E0D\u8BBE\u4EF7\u5DEE\u6216\u8986\u76D6\u7387\u95E8\u69DB\u3002\u6BCF\u4E2A\u6280\u80FD\u6700\u591A 5 \u79CD\uFF1B\u7EFC\u5408\u8BC4\u5206 = \u5229\u6DA6\u6392\u540D 50% + \u5DF2\u89C2\u6D4B\u6210\u4EA4\u91CF\u6392\u540D 50%\u3002\u7EFC\u5408\u6307\u6570\u5BF9\u6240\u5C5E\u6280\u80FD\u7B49\u6743\u3002\u6BCF\u5929\u72EC\u7ACB\u9009\u54C1\uFF0C\u518D\u7528\u540C\u4E00\u7BEE\u5B50\u8BA1\u7B97\u5F53\u5929\u5F00\u9AD8\u4F4E\u6536\u3002"
       )
     );
     settings.append(
       node(
         "p",
         { class: "muted" },
-        "\u4EA7\u7269\u3001\u7CBE\u534E\u3001\u5F00\u7BB1\u6536\u76CA\u6309\u4E70\u4E00\uFF1B\u539F\u6599\u548C\u996E\u98DF\u6309\u5356\u4E00\uFF08\u6709\u91D1\u5E01\u5546\u5E97\u4EF7\u65F6\u53D6\u66F4\u4F4E\u503C\uFF09\u3002100 \u7EA7\u89D2\u8272\u300180 \u7EA7\u5DE5\u5177 +10\u3001\u623F\u5C4B 4 \u7EA7\uFF0C\u9ED8\u8BA4\u7279\u6B8A\u88C5\u5907 +10\u3002\u7A0E\u540E\u542B\u968F\u673A\u6536\u5165\u671F\u671B\uFF0C\u9010\u6837\u672C\u9009\u6700\u8D5A\u94B1\u7684\u5408\u6CD5\u4E09\u69FD\u996E\u54C1\u7EC4\u5408\u3002"
+        "\u4EA7\u7269\u3001\u7CBE\u534E\u3001\u5F00\u7BB1\u6536\u76CA\u6309\u4E70\u4E00\uFF1B\u539F\u6599\u548C\u996E\u98DF\u6309\u5356\u4E00\uFF08\u6709\u91D1\u5E01\u5546\u5E97\u4EF7\u65F6\u53D6\u66F4\u4F4E\u503C\uFF09\u3002\u5356\u51FA\u7A0E\u7387\u56FA\u5B9A 4%\u3002\u9ED8\u8BA4\u6A21\u5F0F\uFF1A100 \u7EA7\u300180 \u7EA7\u5DE5\u5177 +10\u3001\u623F\u5C4B 4 \u7EA7\u3001\u7279\u6B8A\u88C5\u5907 +10\uFF0C\u9010\u6837\u672C\u9009\u6700\u4F73\u996E\u98DF\u3002\u73A9\u5BB6\u6A21\u5F0F\uFF1A\u4F7F\u7528\u5F53\u524D\u89D2\u8272\u7B49\u7EA7\u3001\u88C5\u5907/\u623F\u5C4B\u7B49\u589E\u76CA\u53CA\u6240\u9009\u996E\u98DF\uFF0C\u5047\u5B9A\u996E\u98DF\u6301\u7EED\u8865\u5145\u3002\u6362\u88C5\u540E\u70B9\u51FB\u5237\u65B0\u884C\u60C5\u3002\u4E24\u79CD\u6A21\u5F0F\u5747\u542B\u968F\u673A\u6536\u5165\u671F\u671B\u3002"
       )
     );
-    const fields = node("div", { class: "fields" }), inputs = {};
-    for (const [key, label, min, max, step] of [
-      ["minLevel", "\u6700\u4F4E\u884C\u52A8\u7B49\u7EA7", 1, 100, 1],
-      ["minVolume", "\u6BCF\u65E5\u5DF2\u89C2\u6D4B\u6210\u4EA4\u91CF \u2265", 0, 1e9, 100],
-      ["maxSpread", "\u6700\u5927\u76F8\u5BF9\u4EF7\u5DEE", 0.01, 1, 0.01],
-      ["minCoverage", "\u53CC\u8FB9\u62A5\u4EF7\u8986\u76D6\u7387 \u2265", 0.1, 1, 0.05],
-      ["tax", "\u5356\u51FA\u7A0E\u7387", 0, 0.5, 0.01]
-    ]) {
-      const l = node("label", {}, label), i = node("input", {
-        type: "number",
-        required: "",
-        min,
-        max,
-        step,
-        "aria-label": label
-      });
-      i.value = String(options[key]);
-      inputs[key] = i;
-      l.append(i);
-      fields.append(l);
-    }
-    settings.append(fields);
-    const volumeLabel = node("label");
-    const volumeCheck = node("input", { type: "checkbox" });
-    volumeCheck.checked = options.requireVolume;
-    volumeLabel.append(
-      volumeCheck,
-      document.createTextNode("\u5FC5\u987B\u6709\u771F\u5B9E\u6210\u4EA4\u91CF\uFF08\u5173\u95ED\u540E\u5141\u8BB8\u4EC5\u62A5\u4EF7\u6837\u672C\uFF09")
-    );
-    settings.append(volumeLabel);
-    const apply = button("\u5E94\u7528\u5E76\u91CD\u65B0\u8BA1\u7B97", async () => {
-      for (const [key, i] of Object.entries(inputs)) {
-        if (!i.checkValidity() || !Number.isFinite(+i.value)) {
-          i.reportValidity();
-          return;
-        }
-        options[key] = +i.value;
-      }
-      options.requireVolume = volumeCheck.checked;
-      GM_setValue("options", options);
-      await refreshData(false);
-    });
-    settings.append(document.createTextNode(" "), apply);
     settings.append(
       node(
         "p",
@@ -1100,9 +1154,8 @@ SOFTWARE.
         "\u6210\u5206\u5546\u54C1",
         "\u65E5\u5747\u5229\u6DA6",
         "\u5DF2\u89C2\u6D4B\u91CF",
-        "\u5E73\u5747\u4EF7\u5DEE",
         "\u989D\u5916\u6536\u5165/\u65E5",
-        "\u671F\u672B\u6700\u4F73\u996E\u98DF"
+        options.profile ? "\u5F53\u524D\u89D2\u8272\u996E\u98DF" : "\u671F\u672B\u6700\u4F73\u996E\u98DF"
       ])
         tr.append(node("th", {}, t));
       const head = node("thead");
@@ -1115,11 +1168,10 @@ SOFTWARE.
           milkonomy_default.items[m.main]?.zh || m.main,
           money(m.profit),
           m.volume === null ? "\u65E0\u6210\u4EA4\u91CF" : Math.round(m.volume).toLocaleString("zh-CN"),
-          (m.spread * 100).toFixed(1) + "%",
           money(m.rareIncome),
           m.diet.map((id) => milkonomy_default.items[id]?.zh || id).join("\u3001") || "\u4E0D\u559D\u996E\u54C1"
         ].entries())
-          row.append(node("td", j === 5 ? { class: "diet" } : {}, t));
+          row.append(node("td", j === 4 ? { class: "diet" } : {}, t));
         body.append(row);
       }
       table.append(body);
@@ -1128,6 +1180,7 @@ SOFTWARE.
     }
     function render() {
       cards.replaceChildren();
+      info.textContent = "";
       if (!result) return;
       const allDates = Object.values(result.series).flat().map((b) => b.last);
       if (!allDates.length) {
@@ -1135,7 +1188,7 @@ SOFTWARE.
           node(
             "p",
             { class: "empty" },
-            "\u884C\u60C5\u5DF2\u52A0\u8F7D\uFF0C\u4F46\u6CA1\u6709\u7B26\u5408\u7B5B\u9009\u89C4\u5219\u4E14\u539F\u6599\u3001\u4EA7\u7269\u53CA\u989D\u5916\u6389\u843D\u62A5\u4EF7\u5B8C\u6574\u7684\u54C1\u79CD\u3002\u8BF7\u8C03\u6574\u7B5B\u9009\u6216\u68C0\u67E5\u6570\u636E\u6E90\u3002"
+            "\u884C\u60C5\u5DF2\u52A0\u8F7D\uFF0C\u4F46\u6CA1\u6709\u7B26\u5408\u7B5B\u9009\u89C4\u5219\u4E14\u539F\u6599\u3001\u4EA7\u7269\u53CA\u989D\u5916\u6389\u843D\u62A5\u4EF7\u5B8C\u6574\u7684\u54C1\u79CD\u3002\u8BF7\u68C0\u67E5\u89D2\u8272\u7B49\u7EA7\u548C\u6570\u636E\u6E90\u3002"
           )
         );
         return;
@@ -1150,7 +1203,7 @@ SOFTWARE.
           const members = GROUPS[key] ? GROUPS[key].skills.flatMap(
             (s) => result.series[s].find((x) => x.day === endDay)?.members || []
           ) : b.members;
-          summary.textContent = `${endDay} \u6210\u5206\u4E0E\u6700\u4F73\u996E\u98DF\uFF08${members.length} \u79CD\uFF09`;
+          summary.textContent = `${endDay} \u6210\u5206\u4E0E${options.profile ? "\u89D2\u8272\u996E\u98DF" : "\u6700\u4F73\u996E\u98DF"}\uFF08${members.length} \u79CD\uFF09`;
           detailsTable(table, members);
         };
         const bars = aggregate(
@@ -1183,28 +1236,37 @@ SOFTWARE.
         cards.append(card);
       }
     }
-    async function refreshData(force) {
+    async function refreshData(force, playerMode = !!options.profile) {
       if (busy) return;
       busy = true;
       refresh.disabled = true;
-      apply.disabled = true;
+      modeBtn.disabled = true;
       status.className = "status";
-      warnings.replaceChildren();
       try {
-        source = await loadHistory(milkonomy_default, options, {
+        const nextOptions = {
+          ...DEFAULT_OPTIONS,
+          ...playerMode ? { profile: readPlayer(milkonomy_default) } : {}
+        };
+        const nextSource = await loadHistory(milkonomy_default, nextOptions, {
           cache,
           force,
           progress: (t) => status.textContent = t
         });
-        status.textContent = "\u6B63\u5728\u8BA1\u7B97\u6700\u4F73\u996E\u98DF\u548C\u6BCF\u65E5\u6210\u5206\u2026";
-        result = await buildIndices(
+        status.textContent = playerMode ? "\u6B63\u5728\u6309\u5F53\u524D\u89D2\u8272\u914D\u7F6E\u91CD\u7B97\u6BCF\u65E5\u6210\u5206\u2026" : "\u6B63\u5728\u8BA1\u7B97\u6700\u4F73\u996E\u98DF\u548C\u6BCF\u65E5\u6210\u5206\u2026";
+        const nextResult = await buildIndices(
           milkonomy_default,
-          source.snapshots,
-          options,
+          nextSource.snapshots,
+          nextOptions,
           (n, total) => status.textContent = `\u8BA1\u7B97\u6307\u6570 ${n}/${total} \u5929`,
           () => new Promise((r) => setTimeout(r, 0))
         );
+        options = nextOptions;
+        source = nextSource;
+        result = nextResult;
+        modeBtn.textContent = `\u5207\u6362\u6A21\u5F0F\uFF1A${options.profile ? "\u5F53\u524D\u73A9\u5BB6" : "\u9ED8\u8BA4\u914D\u88C5"}`;
+        subtitle.textContent = options.profile ? `${options.profile.name} \xB7 \u5F53\u524D\u914D\u88C5\u4E0E\u996E\u98DF \xB7 M\u6BCF\u65E5\uFF08\u767E\u4E07\u91D1\u5E01\uFF09\xB7 \u914D\u7F6E\u8BFB\u53D6 ${new Date(options.profile.capturedAt).toLocaleTimeString()}\uFF0C\u5386\u53F2\u6309\u6B64\u914D\u7F6E\u56DE\u7B97` : "\u9ED8\u8BA4\u914D\u88C5 \xB7 \u6700\u4F73\u996E\u98DF \xB7 \u7A0E\u540E\u671F\u671B\u6536\u76CA / M\u6BCF\u65E5\uFF08\u767E\u4E07\u91D1\u5E01\uFF09";
         status.textContent = source.warnings.length ? "\u884C\u60C5\u5DF2\u8F7D\u5165\uFF1B\u90E8\u5206\u8BF7\u6C42\u4F7F\u7528\u7F13\u5B58\u6216\u5B58\u5728\u6570\u636E\u63D0\u793A\u3002" : "\u884C\u60C5\u4E0E\u6307\u6570\u5DF2\u66F4\u65B0\u3002";
+        warnings.replaceChildren();
         if (source.warnings.length) {
           const box = node("details", { class: "warning" });
           box.append(
@@ -1220,11 +1282,11 @@ SOFTWARE.
         render();
       } catch (e) {
         status.className = "status error";
-        status.textContent = `\u52A0\u8F7D\u5931\u8D25\uFF1A${e.message} \u70B9\u51FB\u201C\u5237\u65B0\u884C\u60C5\u201D\u91CD\u8BD5\u3002`;
+        status.textContent = `\u66F4\u65B0\u5931\u8D25\uFF1A${e.message}${result ? " \u4FDD\u7559\u4E0A\u6B21\u6A21\u5F0F\u4E0E\u7ED3\u679C\u3002" : ""} \u8BF7\u91CD\u8BD5\u3002`;
       } finally {
         busy = false;
         refresh.disabled = false;
-        apply.disabled = false;
+        modeBtn.disabled = false;
       }
     }
   }

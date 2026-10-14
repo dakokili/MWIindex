@@ -5,7 +5,8 @@ import { buildIndices, aggregate, dayKey, DAY } from "./indices.js";
 import { storage, loadHistory } from "./transport.js";
 import { renderChart, money } from "./chart.js";
 
-const VERSION = "1.0.0";
+import { readPlayer } from "./player.js";
+const VERSION = "1.1.0";
 function node(tag, attrs = {}, text) {
   const e = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
@@ -20,21 +21,6 @@ function button(text, fn, attrs = {}) {
   e.addEventListener("click", fn);
   return e;
 }
-function safeOptions() {
-  try {
-    const o = GM_getValue("options", {});
-    return {
-      ...DEFAULT_OPTIONS,
-      ...Object.fromEntries(
-        Object.keys(DEFAULT_OPTIONS)
-          .filter((k) => typeof o[k] === typeof DEFAULT_OPTIONS[k])
-          .map((k) => [k, o[k]]),
-      ),
-    };
-  } catch {
-    return { ...DEFAULT_OPTIONS };
-  }
-}
 export function mount() {
   if (document.getElementById("mwi-profit-index-host")) return;
   const host = node("div", { id: "mwi-profit-index-host" });
@@ -48,7 +34,7 @@ export function mount() {
     period = "day",
     view = "overview",
     range = 60,
-    options = safeOptions();
+    options = { ...DEFAULT_OPTIONS };
   const panel = node("section", {
     class: "panel",
     hidden: "",
@@ -64,14 +50,15 @@ export function mount() {
   shadow.append(launch, panel);
   const header = node("header");
   const title = node("div");
+  const subtitle = node(
+    "p",
+    { class: "muted" },
+    "默认配装 · 最佳饮食 · 税后期望收益 / M每日（百万金币）",
+  );
   title.append(
     node("p", { class: "eyebrow" }, "MILKY WAY IDLE · MARKET INDICES"),
     node("h1", {}, "银河生产 · 利润指数"),
-    node(
-      "p",
-      { class: "muted" },
-      "默认配装 · 最佳饮食 · 税后期望收益 / 金币每日",
-    ),
+    subtitle,
   );
   header.append(
     title,
@@ -105,6 +92,9 @@ export function mount() {
     render();
   });
   const refresh = button("刷新行情", () => refreshData(true));
+  const modeBtn = button("切换模式：默认配装", () =>
+    refreshData(false, !options.profile),
+  );
   const exportBtn = button("导出 JSON", () => {
     if (!result) return;
     const blob = new Blob(
@@ -112,6 +102,8 @@ export function mount() {
         JSON.stringify(
           {
             version: VERSION,
+            valueUnit: "coins/day",
+            displayUnit: "M/day",
             ...result,
             dataSource: source?.manifestTime,
             warnings: source?.warnings,
@@ -127,7 +119,7 @@ export function mount() {
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   });
-  toolbar.append(segments, rangeSelect, refresh, exportBtn);
+  toolbar.append(segments, rangeSelect, modeBtn, refresh, exportBtn);
   panel.append(toolbar);
   const tabs = node("div", { class: "tabs" });
   for (const [k, label] of [
@@ -152,61 +144,16 @@ export function mount() {
     node(
       "p",
       { class: "muted" },
-      "每个技能最多 5 种；综合评分 = 利润排名 50% + 已观测成交量排名 25% + 双边报价质量排名 25%。综合指数对所属技能等权。每天独立选品，再用同一篮子计算当天开高低收。",
+      "固定最低行动等级 20、每日已观测成交量至少 1,000，不设价差或覆盖率门槛。每个技能最多 5 种；综合评分 = 利润排名 50% + 已观测成交量排名 50%。综合指数对所属技能等权。每天独立选品，再用同一篮子计算当天开高低收。",
     ),
   );
   settings.append(
     node(
       "p",
       { class: "muted" },
-      "产物、精华、开箱收益按买一；原料和饮食按卖一（有金币商店价时取更低值）。100 级角色、80 级工具 +10、房屋 4 级，默认特殊装备 +10。税后含随机收入期望，逐样本选最赚钱的合法三槽饮品组合。",
+      "产物、精华、开箱收益按买一；原料和饮食按卖一（有金币商店价时取更低值）。卖出税率固定 4%。默认模式：100 级、80 级工具 +10、房屋 4 级、特殊装备 +10，逐样本选最佳饮食。玩家模式：使用当前角色等级、装备/房屋等增益及所选饮食，假定饮食持续补充。换装后点击刷新行情。两种模式均含随机收入期望。",
     ),
   );
-  const fields = node("div", { class: "fields" }),
-    inputs = {};
-  for (const [key, label, min, max, step] of [
-    ["minLevel", "最低行动等级", 1, 100, 1],
-    ["minVolume", "每日已观测成交量 ≥", 0, 1e9, 100],
-    ["maxSpread", "最大相对价差", 0.01, 1, 0.01],
-    ["minCoverage", "双边报价覆盖率 ≥", 0.1, 1, 0.05],
-    ["tax", "卖出税率", 0, 0.5, 0.01],
-  ]) {
-    const l = node("label", {}, label),
-      i = node("input", {
-        type: "number",
-        required: "",
-        min,
-        max,
-        step,
-        "aria-label": label,
-      });
-    i.value = String(options[key]);
-    inputs[key] = i;
-    l.append(i);
-    fields.append(l);
-  }
-  settings.append(fields);
-  const volumeLabel = node("label");
-  const volumeCheck = node("input", { type: "checkbox" });
-  volumeCheck.checked = options.requireVolume;
-  volumeLabel.append(
-    volumeCheck,
-    document.createTextNode("必须有真实成交量（关闭后允许仅报价样本）"),
-  );
-  settings.append(volumeLabel);
-  const apply = button("应用并重新计算", async () => {
-    for (const [key, i] of Object.entries(inputs)) {
-      if (!i.checkValidity() || !Number.isFinite(+i.value)) {
-        i.reportValidity();
-        return;
-      }
-      options[key] = +i.value;
-    }
-    options.requireVolume = volumeCheck.checked;
-    GM_setValue("options", options);
-    await refreshData(false);
-  });
-  settings.append(document.createTextNode(" "), apply);
   settings.append(
     node(
       "p",
@@ -281,9 +228,8 @@ export function mount() {
       "成分商品",
       "日均利润",
       "已观测量",
-      "平均价差",
       "额外收入/日",
-      "期末最佳饮食",
+      options.profile ? "当前角色饮食" : "期末最佳饮食",
     ])
       tr.append(node("th", {}, t));
     const head = node("thead");
@@ -298,11 +244,10 @@ export function mount() {
         m.volume === null
           ? "无成交量"
           : Math.round(m.volume).toLocaleString("zh-CN"),
-        (m.spread * 100).toFixed(1) + "%",
         money(m.rareIncome),
         m.diet.map((id) => data.items[id]?.zh || id).join("、") || "不喝饮品",
       ].entries())
-        row.append(node("td", j === 5 ? { class: "diet" } : {}, t));
+        row.append(node("td", j === 4 ? { class: "diet" } : {}, t));
       body.append(row);
     }
     table.append(body);
@@ -311,6 +256,7 @@ export function mount() {
   }
   function render() {
     cards.replaceChildren();
+    info.textContent = "";
     if (!result) return;
     const allDates = Object.values(result.series)
       .flat()
@@ -320,7 +266,7 @@ export function mount() {
         node(
           "p",
           { class: "empty" },
-          "行情已加载，但没有符合筛选规则且原料、产物及额外掉落报价完整的品种。请调整筛选或检查数据源。",
+          "行情已加载，但没有符合筛选规则且原料、产物及额外掉落报价完整的品种。请检查角色等级和数据源。",
         ),
       );
       return;
@@ -361,7 +307,7 @@ export function mount() {
                 result.series[s].find((x) => x.day === endDay)?.members || [],
             )
           : b.members;
-        summary.textContent = `${endDay} 成分与最佳饮食（${members.length} 种）`;
+        summary.textContent = `${endDay} 成分与${options.profile ? "角色饮食" : "最佳饮食"}（${members.length} 种）`;
         detailsTable(table, members);
       }
       card.append(stats, chart, detail);
@@ -378,30 +324,43 @@ export function mount() {
       cards.append(card);
     }
   }
-  async function refreshData(force) {
+  async function refreshData(force, playerMode = !!options.profile) {
     if (busy) return;
     busy = true;
     refresh.disabled = true;
-    apply.disabled = true;
+    modeBtn.disabled = true;
     status.className = "status";
-    warnings.replaceChildren();
     try {
-      source = await loadHistory(data, options, {
+      const nextOptions = {
+        ...DEFAULT_OPTIONS,
+        ...(playerMode ? { profile: readPlayer(data) } : {}),
+      };
+      const nextSource = await loadHistory(data, nextOptions, {
         cache,
         force,
         progress: (t) => (status.textContent = t),
       });
-      status.textContent = "正在计算最佳饮食和每日成分…";
-      result = await buildIndices(
+      status.textContent = playerMode
+        ? "正在按当前角色配置重算每日成分…"
+        : "正在计算最佳饮食和每日成分…";
+      const nextResult = await buildIndices(
         data,
-        source.snapshots,
-        options,
+        nextSource.snapshots,
+        nextOptions,
         (n, total) => (status.textContent = `计算指数 ${n}/${total} 天`),
         () => new Promise((r) => setTimeout(r, 0)),
       );
+      options = nextOptions;
+      source = nextSource;
+      result = nextResult;
+      modeBtn.textContent = `切换模式：${options.profile ? "当前玩家" : "默认配装"}`;
+      subtitle.textContent = options.profile
+        ? `${options.profile.name} · 当前配装与饮食 · M每日（百万金币）· 配置读取 ${new Date(options.profile.capturedAt).toLocaleTimeString()}，历史按此配置回算`
+        : "默认配装 · 最佳饮食 · 税后期望收益 / M每日（百万金币）";
       status.textContent = source.warnings.length
         ? "行情已载入；部分请求使用缓存或存在数据提示。"
         : "行情与指数已更新。";
+      warnings.replaceChildren();
       if (source.warnings.length) {
         const box = node("details", { class: "warning" });
         box.append(
@@ -417,11 +376,11 @@ export function mount() {
       render();
     } catch (e) {
       status.className = "status error";
-      status.textContent = `加载失败：${e.message} 点击“刷新行情”重试。`;
+      status.textContent = `更新失败：${e.message}${result ? " 保留上次模式与结果。" : ""} 请重试。`;
     } finally {
       busy = false;
       refresh.disabled = false;
-      apply.disabled = false;
+      modeBtn.disabled = false;
     }
   }
 }

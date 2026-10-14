@@ -23,3 +23,11 @@
 2026-10-13 实际下载核验了全部 149 个所需物品分片（原材料、成品、饮品、开箱材料）。过滤掉每日中位数后获得 556 个原始时间戳，覆盖北京时间 2026-08-14 至 2026-10-13；八个技能及三个综合指数均有 61 个自然日桶（两端可能不完整）。样本已用于计算和界面验证，不嵌入生产脚本作为行情兜底。
 
 `tests/fixtures/official-snapshots.json` 取上述原始行情末尾三天，转换成脚本内部结构，用于离线回归测试。使用该 fixture 的浏览器截图属于集成测试结果，不是实际登录游戏后的截图。
+
+## 当前角色状态结构
+
+- [MWICommon](https://github.com/Lhiok/MWIScript/blob/main/MWICommon.js)：核对已挂载游戏实例与角色状态映射，不使用其客户端代码替换方式。
+- [MWI-Profit-Panel](https://github.com/Meng-Lan/MWI-Profit-Panel)：核对 `characterSkillMap`、服务器按行动分类的装备/房屋等增益和饮品浓度字段。只参考字段与机制，未复制其实现。
+- [init_character_data 类型声明](https://github.com/c3d-gg/fast-ah-wh-to-idb/blob/main/src/types/INIT_CHARACTER_DATA.ts)：核对角色、饮食槽和增益字段。
+
+角色读取不需要新行情接口；切换配置后仍用相同公开买一/卖一历史重新计算。当前环境无法访问游戏网页（HTTP 403），通过单元测试及模拟 React 游戏状态的 Chromium 集成测试验证，尚未登录真实游戏账号验证。

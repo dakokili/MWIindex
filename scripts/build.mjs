@@ -13,8 +13,7 @@ const header = `// ==UserScript==
 // @match        https://milkywayidlecn.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
-// @grant        GM_getValue
-// @grant        GM_setValue
+// @grant        unsafeWindow
 // @connect      raw.githubusercontent.com
 // @noframes
 // @license      MIT

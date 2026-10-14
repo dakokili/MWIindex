@@ -3,6 +3,7 @@ import { readFile, mkdir } from "node:fs/promises";
 import assert from "node:assert/strict";
 import snapshots from "./fixtures/official-snapshots.json" with { type: "json" };
 import data from "../data/milkonomy.json" with { type: "json" };
+import { playerState } from "./player-fixture.js";
 import { requiredItems } from "../src/data.js";
 const items = requiredItems(data),
   latest = snapshots.at(-1).time;
@@ -64,9 +65,13 @@ try {
     }),
   );
   await page.addInitScript(
-    ({ payloads }) => {
+    ({ payloads, latest }) => {
+      Date.now = () => latest * 1000;
+      window.unsafeWindow = window;
       window.GM_getValue = (k, d) =>
-        JSON.parse(localStorage.getItem("gm:" + k) || "null") ?? d;
+        k === "options"
+          ? { minLevel: 1, minVolume: 0, tax: 0, requireVolume: false }
+          : d;
       window.GM_setValue = (k, v) =>
         localStorage.setItem("gm:" + k, JSON.stringify(v));
       window.mockOffline = false;
@@ -89,7 +94,7 @@ try {
         }, 0);
       };
     },
-    { payloads },
+    { payloads, latest },
   );
   await page.goto("https://www.milkywayidle.com/game");
   await page.addScriptTag({ content: script });
@@ -100,6 +105,55 @@ try {
   await page.getByText("行情与指数已更新。", { exact: true }).waitFor();
   assert.equal(await page.locator(".card").count(), 3);
   assert.equal(await page.locator(".chart svg").count(), 3);
+  assert.equal(await page.locator("input").count(), 0);
+  const defaultValues = await page.locator(".value").allTextContents();
+  assert.ok(defaultValues.every((t) => t.includes("M")));
+  const mode = page.getByRole("button", { name: /切换模式/ });
+  await mode.click();
+  await page.locator(".status.error").waitFor();
+  assert.match(await page.locator(".status").innerText(), /完整角色/);
+  assert.match(await mode.innerText(), /默认配装/);
+  assert.deepEqual(
+    await page.locator(".value").allTextContents(),
+    defaultValues,
+  );
+  // Mimic the mounted game's React tree; no helper plugin is installed.
+  await page.evaluate((state) => {
+    const root = document.createElement("div");
+    root.id = "root";
+    root["__reactContainer$test"] = {
+      stateNode: { current: { child: { stateNode: { state } } } },
+    };
+    document.body.append(root);
+    window.fixturePlayer = state;
+  }, playerState());
+  await mode.click();
+  await page
+    .getByRole("button", { name: "切换模式：当前玩家", exact: true })
+    .waitFor();
+  assert.notDeepEqual(
+    await page.locator(".value").allTextContents(),
+    defaultValues,
+  );
+  assert.match(await page.locator("header .muted").innerText(), /测试角色/);
+  // A second role/configuration is read on refresh, not cached from the first read.
+  await page.evaluate(() => {
+    window.fixturePlayer.character.name = "第二角色";
+    for (const s of Object.values(window.fixturePlayer.characterSkillMap))
+      s.level = 19;
+  });
+  await page.getByRole("button", { name: "刷新行情", exact: true }).click();
+  await page.getByText(/请检查角色等级和数据源。/).waitFor();
+  assert.match(await page.locator("header .muted").innerText(), /第二角色/);
+  assert.equal(await page.locator(".chart svg").count(), 0);
+  await mode.click();
+  await page
+    .getByRole("button", { name: "切换模式：默认配装", exact: true })
+    .waitFor();
+  assert.deepEqual(
+    await page.locator(".value").allTextContents(),
+    defaultValues,
+  );
   await page.getByRole("button", { name: "周线", exact: true }).click();
   assert.equal(
     await page
@@ -175,7 +229,7 @@ try {
   await isolated.close();
   assert.deepEqual(errors, []);
   console.log(
-    "Browser PASS: mount, toggle, periods, constituents, keyboard, mobile, export, offline cache and retryable failure.",
+    "Browser PASS: mount, M units, fixed rules, player modes, missing role, configuration refresh, periods, constituents, keyboard, mobile, export, offline cache and retryable failure.",
   );
 } finally {
   await browser.close();

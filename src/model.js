@@ -19,12 +19,9 @@ export const GROUPS = {
 };
 export const DEFAULT_OPTIONS = Object.freeze({
   minLevel: 20,
-  maxSpread: 0.2,
-  minCoverage: 0.8,
   minVolume: 1000,
   top: 5,
   tax: 0.04,
-  requireVolume: true,
 });
 const gathering = new Set(["milking", "foraging", "woodcutting"]);
 const COIN = "/items/coin";
@@ -35,8 +32,9 @@ export function candidates(data, options = DEFAULT_OPTIONS) {
   return data.actions.filter((a) => {
     if (
       !SKILLS[a.skill] ||
-      a.level < options.minLevel ||
-      a.level > data.defaults.level ||
+      a.level < DEFAULT_OPTIONS.minLevel ||
+      a.level >
+        (options.profile?.skills[a.skill]?.level ?? data.defaults.level) ||
       a.upgrade
     )
       return false;
@@ -54,7 +52,8 @@ export function candidates(data, options = DEFAULT_OPTIONS) {
   });
 }
 
-export function baseBuffs(data, skill) {
+export function baseBuffs(data, skill, profile) {
+  if (profile) return { ...profile.skills[skill].buffs };
   const b = {
     Level: 0,
     Speed: 0,
@@ -125,7 +124,7 @@ export function compileVariant(
   teaIds,
   options = DEFAULT_OPTIONS,
 ) {
-  const b = baseBuffs(data, action.skill);
+  const b = baseBuffs(data, action.skill, options.profile);
   const buffKeys = {
     efficiency: "Efficiency",
     artisan: "Artisan",
@@ -144,7 +143,13 @@ export function compileVariant(
     }
   const efficiency =
     1 +
-    Math.max(0, (data.defaults.level + b.Level - action.level) * 0.01) +
+    Math.max(
+      0,
+      ((options.profile?.skills[action.skill].level ?? data.defaults.level) +
+        b.Level -
+        action.level) *
+        0.01,
+    ) +
     b.Efficiency;
   const actionsPH =
     (3600 / Math.max(3, action.seconds / (1 + b.Speed))) * efficiency;
@@ -214,7 +219,12 @@ export function compileVariant(
   for (const d of action.rare)
     addOutput(d.itemHrid, d.maxCount * d.dropRate * (1 + b.RareFind), true);
   for (const id of teaIds)
-    inputs.push({ id, rate: 12 * (1 + b.concentration) });
+    inputs.push({
+      id,
+      rate:
+        (3600e9 / (data.items[id].consumable.buffs[0]?.duration || 300e9)) *
+        (1 + b.concentration),
+    });
   return {
     teaIds,
     inputs: inputs.filter((x) => x.rate > 0),
@@ -256,7 +266,10 @@ export function evaluate(variant, snapshot) {
 
 export function compileModel(data, options = DEFAULT_OPTIONS) {
   const dietMap = Object.fromEntries(
-    Object.keys(SKILLS).map((s) => [s, diets(data, s)]),
+    Object.keys(SKILLS).map((s) => [
+      s,
+      options.profile ? [options.profile.skills[s].diet] : diets(data, s),
+    ]),
   );
   return candidates(data, options).map((action) => ({
     action,

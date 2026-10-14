@@ -1,11 +1,5 @@
 export const money = (n) =>
-  Number.isFinite(n)
-    ? Math.abs(n) >= 1e8
-      ? (n / 1e8).toFixed(2) + " 亿"
-      : Math.abs(n) >= 1e4
-        ? (n / 1e4).toFixed(2) + " 万"
-        : n.toFixed(0)
-    : "—";
+  Number.isFinite(n) ? (n / 1e6).toFixed(2) + "M" : "—";
 const NS = "http://www.w3.org/2000/svg";
 function svgEl(tag, attrs = {}, text) {
   const e = document.createElementNS(NS, tag);
@@ -19,7 +13,7 @@ export function renderChart(container, bars, onSelect, period = "day") {
     const p = document.createElement("p");
     p.className = "empty";
     p.textContent =
-      "暂无符合筛选条件的数据。可检查成交量门槛、报价覆盖率与数据源状态。";
+      "暂无符合筛选条件的数据。最低行动等级 20、日成交量至少 1,000；请检查角色等级和数据源状态。";
     container.append(p);
     return;
   }
@@ -37,7 +31,7 @@ export function renderChart(container, bars, onSelect, period = "day") {
   const svg = svgEl("svg", {
     viewBox: `0 0 ${width} ${height}`,
     role: "img",
-    "aria-label": `${bars.length} 根利润K线，单位金币每日；点击或键盘选择查看详情`,
+    "aria-label": `${bars.length} 根利润K线，单位M每日（百万金币）；点击或键盘选择查看详情`,
   });
   for (let i = 0; i <= 4; i++) {
     const value = lo + ((hi - lo) * i) / 4,

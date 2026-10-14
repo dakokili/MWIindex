@@ -77,43 +77,29 @@ export function selectMembers(models, snapshots, options = DEFAULT_OPTIONS) {
   const rows = [];
   for (const model of models) {
     const quotes = snapshots.map((s) => s.prices[model.main]);
-    const validQuotes = quotes.filter(
-      (q) => q?.ask > 0 && q.bid > 0 && q.ask >= q.bid,
-    );
-    const coverage = validQuotes.length / snapshots.length;
-    if (coverage < options.minCoverage) continue;
-    const spread = mean(
-      validQuotes.map((q) => (q.ask - q.bid) / ((q.ask + q.bid) / 2)),
-    );
-    if (spread > options.maxSpread) continue;
-    const volumes = validQuotes
-      .map((q) => q.volume)
+    const volumes = quotes
+      .map((q) => q?.volume)
       .filter((v) => Number.isFinite(v) && v >= 0);
-    const volume = volumes.length ? volumes.reduce((s, v) => s + v, 0) : null;
-    if (options.requireVolume && volume === null) continue;
-    if (volume !== null && volume < options.minVolume) continue;
+    const volume = volumes.reduce((sum, v) => sum + v, 0);
+    if (!volumes.length || volume < DEFAULT_OPTIONS.minVolume) continue;
     const results = snapshots.map((s) => bestProfit(model, s));
     const valid = results.filter(Boolean);
-    if (valid.length / snapshots.length < options.minCoverage) continue;
+    if (!valid.length) continue;
     rows.push({
       id: model.action.id,
       main: model.main,
       skill: model.action.skill,
       profit: mean(valid.map((r) => r.profit)),
-      coverage,
-      spread,
       volume,
-      liquidity: coverage * (1 - spread),
       results,
     });
   }
   const p = ranks(rows, (r) => r.profit),
-    l = ranks(rows, (r) => r.liquidity),
     v = ranks(rows, (r) => (r.volume === null ? 0 : r.volume));
   return rows
     .map((r) => ({
       ...r,
-      score: 0.5 * p.get(r) + 0.25 * l.get(r) + 0.25 * v.get(r),
+      score: 0.5 * p.get(r) + 0.5 * v.get(r),
     }))
     .sort(
       (a, b) =>

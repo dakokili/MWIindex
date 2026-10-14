@@ -1,0 +1,134 @@
+import { SKILLS } from "./model.js";
+const get = (map, key) =>
+  typeof map?.get === "function" ? map.get(key) : map?.[key];
+const values = (map) =>
+  typeof map?.values === "function"
+    ? [...map.values()]
+    : Object.values(map || {});
+const buffKeys = {
+  efficiency: "Efficiency",
+  action_speed: "Speed",
+  rare_find: "RareFind",
+  essence_find: "EssenceFind",
+  gathering: "Gathering",
+  processing: "Processing",
+  artisan: "Artisan",
+  gourmet: "Gourmet",
+};
+
+// Read only a mounted Game component. No socket interception, game actions or account data storage.
+export function findPlayerState(page, doc) {
+  for (const game of [page.mwi?.game, page.mwi_common?.game]) {
+    if (game?.state?.character && game.state.characterSkillMap)
+      return game.state;
+  }
+  const root = doc.getElementById("root");
+  if (!root) return null;
+  const stack = [];
+  for (const el of [root, ...root.children]) {
+    for (const key of Object.keys(el)) {
+      if (key.startsWith("__reactFiber$")) stack.push(el[key]);
+      if (key.startsWith("__reactContainer$"))
+        stack.push(el[key].stateNode?.current || el[key]);
+    }
+  }
+  const seen = new Set();
+  while (stack.length && seen.size < 50000) {
+    const fiber = stack.pop();
+    if (!fiber || seen.has(fiber)) continue;
+    seen.add(fiber);
+    const state = fiber.stateNode?.state;
+    if (
+      state?.character &&
+      state.characterSkillMap &&
+      state.equipmentActionTypeBuffsMap
+    )
+      return state;
+    stack.push(fiber.child, fiber.sibling);
+  }
+  return null;
+}
+
+export function normalizePlayer(state, data) {
+  if (
+    !state?.character ||
+    !state.characterSkillMap ||
+    !state.noncombatStats ||
+    !state.equipmentActionTypeBuffsMap ||
+    !state.houseActionTypeBuffsMap ||
+    !state.actionTypeDrinkSlotsMap
+  )
+    throw new Error(
+      "尚未读到完整角色数据，请进入游戏后重试；若已登录，请刷新游戏页面。",
+    );
+  const skills = {};
+  for (const skill of Object.keys(SKILLS)) {
+    const level = values(state.characterSkillMap).find(
+      (s) => s.skillHrid === `/skills/${skill}`,
+    )?.level;
+    if (!Number.isFinite(level) || level < 1)
+      throw new Error(`无法读取${SKILLS[skill]}等级`);
+    const buffs = {
+      Level: 0,
+      Speed: 0,
+      Efficiency: 0,
+      RareFind: 0,
+      EssenceFind: 0,
+      Gathering: 0,
+      Processing: 0,
+      Artisan: 0,
+      Gourmet: 0,
+      concentration: state.noncombatStats.drinkConcentration || 0,
+    };
+    const actionType = `/action_types/${skill}`;
+    // Server-resolved equipment includes enhancement; house includes global room bonuses.
+    // Consumable buffs are rebuilt from selected slots below, never added twice.
+    for (const source of [
+      "equipment",
+      "house",
+      "community",
+      "achievement",
+      "personal",
+      "mooPass",
+      "guild",
+    ]) {
+      for (const buff of get(
+        state[`${source}ActionTypeBuffsMap`],
+        actionType,
+      ) || []) {
+        const type = buff.typeHrid?.split("/").at(-1);
+        const key =
+          type === `${skill}_level` || type === "action_level"
+            ? "Level"
+            : buffKeys[type];
+        if (!key) continue;
+        if (buff.ratioBoost) throw new Error(`暂不支持角色的比例增益：${type}`);
+        if (!Number.isFinite(buff.flatBoost))
+          throw new Error(`角色增益数据不完整：${type}`);
+        buffs[key] += buff.flatBoost * (type === "action_level" ? -1 : 1);
+      }
+    }
+    const diet = [];
+    for (const kind of ["Drink", "Food"]) {
+      for (const slot of get(state[`actionType${kind}SlotsMap`], actionType) ||
+        []) {
+        if (!slot?.itemHrid) continue;
+        const item = data.items[slot.itemHrid];
+        if (!item?.consumable?.usableInActionTypeMap?.[actionType])
+          throw new Error(`规则快照未包含当前饮食：${slot.itemHrid}`);
+        diet.push(slot.itemHrid);
+      }
+    }
+    skills[skill] = { level, buffs, diet };
+  }
+  // Whitelist only production data; no account, inventory, chat or authentication fields.
+  return {
+    name: String(state.character.name || "当前角色"),
+    capturedAt: new Date().toISOString(),
+    skills,
+  };
+}
+export function readPlayer(data) {
+  const page = typeof unsafeWindow === "undefined" ? window : unsafeWindow;
+  return normalizePlayer(findPlayerState(page, page.document), data);
+}

@@ -33,48 +33,42 @@ test("true chronological OHLC, weekly extrema and equal-day mean, negative value
   assert.equal(w.mean, (-19 / 3 + 20) / 2);
   assert.equal(w.samples, 4);
 });
-test("liquidity filters reject missing volume, crossed/wide quotes; absent data is not zero profit", () => {
+test("fixed volume gate ignores spread, coverage and legacy overrides; missing prices remain missing", () => {
   const model = {
     main: "x",
     action: { id: "a", skill: "milking" },
     variants: [{ inputs: [], outputs: [{ id: "x", rate: 1 }], teaIds: [] }],
   };
-  const s = (q) => [{ time: 1, prices: { x: q } }];
-  assert.equal(
-    selectMembers([model], s({ ask: 100, bid: 99 }), DEFAULT_OPTIONS).length,
-    0,
+  const sample = (q) => ({ time: 1, prices: { x: q } });
+  for (const quote of [
+    { bid: 99 },
+    { bid: 99, volume: 999 },
+    { bid: 0, volume: 1000 },
+  ])
+    assert.equal(
+      selectMembers([model], [sample(quote)], {
+        ...DEFAULT_OPTIONS,
+        minVolume: 0,
+        requireVolume: false,
+      }).length,
+      0,
+    );
+  for (const quote of [
+    { ask: 100, bid: 1, volume: 1000 },
+    { ask: 90, bid: 100, volume: 1000 },
+    { bid: 99, volume: 1000 },
+  ])
+    assert.equal(selectMembers([model], [sample(quote)]).length, 1);
+  const selected = selectMembers(
+    [model],
+    [
+      sample({ bid: 10, volume: 1000 }),
+      ...Array.from({ length: 9 }, () => ({ time: 2, prices: {} })),
+    ],
   );
-  assert.equal(
-    selectMembers(
-      [model],
-      s({ ask: 100, bid: 99, volume: 10000 }),
-      DEFAULT_OPTIONS,
-    ).length,
-    1,
-  );
-  assert.equal(
-    selectMembers(
-      [model],
-      s({ ask: 100, bid: 1, volume: 10000 }),
-      DEFAULT_OPTIONS,
-    ).length,
-    0,
-  );
-  assert.equal(
-    selectMembers(
-      [model],
-      s({ ask: 90, bid: 100, volume: 10000 }),
-      DEFAULT_OPTIONS,
-    ).length,
-    0,
-  );
-  assert.equal(
-    selectMembers([model], s({ ask: 100, bid: 99 }), {
-      ...DEFAULT_OPTIONS,
-      requireVolume: false,
-    }).length,
-    1,
-  );
+  assert.equal(selected.length, 1);
+  assert.equal(selected[0].profit, 240);
+  assert.equal(selected[0].results[1], null);
 });
 test("real official fixtures yield all 11 indices, max five members, finite bars and no duplicate inflation", async () => {
   const a = await buildIndices(data, snapshots);
