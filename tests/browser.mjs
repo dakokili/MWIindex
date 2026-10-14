@@ -1,5 +1,6 @@
 import { chromium } from "playwright-core";
 import { readFile, mkdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import assert from "node:assert/strict";
 import snapshots from "./fixtures/official-snapshots.json" with { type: "json" };
 import data from "../data/milkonomy.json" with { type: "json" };
@@ -51,7 +52,9 @@ payloads["api.json"] = {
 };
 const script = await readFile("mwi-profit-indices.user.js", "utf8");
 const browser = await chromium.launch({
-  executablePath: process.env.CHROMIUM_PATH || "/usr/bin/chromium",
+  executablePath:
+    process.env.CHROMIUM_PATH ||
+    (existsSync("/usr/bin/chromium") ? "/usr/bin/chromium" : undefined),
   headless: true,
   args: ["--no-sandbox"],
 });
@@ -158,17 +161,44 @@ try {
     await page.locator(".value").allTextContents(),
     defaultValues,
   );
-  // Mimic the mounted game's React tree; no helper plugin is installed.
+  // Use real React 16 containers/Fibers, not a hand-written modern root.
+  // This reproduces logged-in players being invisible to the old reader.
+  await page.addScriptTag({
+    path: "node_modules/react/umd/react.production.min.js",
+  });
+  await page.addScriptTag({
+    path: "node_modules/react-dom/umd/react-dom.production.min.js",
+  });
   await page.evaluate((state) => {
     const root = document.createElement("div");
     root.id = "root";
-    root["__reactContainer$test"] = {
-      stateNode: { current: { child: { stateNode: { state } } } },
-    };
     document.body.append(root);
-    window.fixturePlayer = state;
+    class Game extends React.Component {
+      constructor(props) {
+        super(props);
+        this.state = state;
+      }
+      render() {
+        return React.createElement(
+          "div",
+          null,
+          this.state.character?.name || "未登录",
+        );
+      }
+    }
+    window.fixtureGame = ReactDOM.render(React.createElement(Game), root);
   }, playerState());
   await mode.click();
+  await page.waitForFunction(() =>
+    [
+      ...document
+        .getElementById("mwi-profit-index-host")
+        .shadowRoot.querySelectorAll("button"),
+    ].some(
+      (button) => button.textContent.startsWith("切换模式") && !button.disabled,
+    ),
+  );
+  assert.doesNotMatch(await page.locator(".status").innerText(), /更新失败/);
   await page
     .getByRole("button", { name: "切换模式：当前玩家", exact: true })
     .waitFor();
@@ -190,9 +220,18 @@ try {
   );
   // Market refresh keeps the configuration; the separate equipment button reads a new role/configuration.
   await page.evaluate(() => {
-    window.fixturePlayer.character.name = "第二角色";
-    for (const s of Object.values(window.fixturePlayer.characterSkillMap))
-      s.level = 19;
+    const state = window.fixtureGame.state;
+    window.fixtureGame.setState({
+      character: { ...state.character, name: "第二角色" },
+      characterSkillMap: Object.fromEntries(
+        Object.entries(state.characterSkillMap).map(([key, skill]) => [
+          key,
+          { ...skill, level: 19 },
+        ]),
+      ),
+    });
+    // Exercise the legacy DOM marker fallback, including a committed rerender.
+    delete document.getElementById("root")._reactRootContainer;
   });
   const beforeRefresh = await page.locator(".value").allTextContents();
   await page.getByRole("button", { name: "刷新行情", exact: true }).click();

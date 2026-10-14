@@ -31,3 +31,9 @@
 - [init_character_data 类型声明](https://github.com/c3d-gg/fast-ah-wh-to-idb/blob/main/src/types/INIT_CHARACTER_DATA.ts)：核对角色、饮食槽和增益字段。
 
 角色读取不需要新行情接口；切换配置后仍用相同公开买一/卖一历史重新计算。当前环境无法访问游戏网页（HTTP 403），通过单元测试及模拟 React 游戏状态的 Chromium 集成测试验证，尚未登录真实游戏账号验证。
+
+### 2026-10-14 角色读取回归修复（v1.3.1）
+
+旧读取器只识别 `__reactFiber$` / `__reactContainer$`，遗漏 React 16 的 `_reactRootContainer._internalRoot.current` 和 `__reactInternalInstance$`。在 Chromium 中用真正的 React 16.14.0 挂载带完整生产状态的组件，可重现已登录仍报「尚未读到完整角色数据」；这不是缺少技能或装备数据，而是没有找到组件。
+
+修复同时沿 DOM Fiber 的父链找到根的 `current`，避免从旧渲染树读取，并继续搜索完整候选。公开生态中的旧根结构也可见 [MWI Tools 的当前状态读取](https://github.com/YangLeda/Userscripts-For-MilkyWayIdle/blob/7941b4c6f4069820f5ec012fff5cd9b2eaecef60/src/features/procurement.js)。回归测试覆盖真实 React 挂载、移除根容器入口后的 DOM 标记回退、`setState` 换角色，以及旧引用/不完整状态；仅参考结构，未复制第三方实现。尚未使用反馈者的真实账号或浏览器复测。

@@ -94,6 +94,61 @@ test("finds mounted React Game without companion plugins; follows current tree a
   assert.equal(findPlayerState({}, { getElementById: () => root }), null);
 });
 
+test("finds legacy React roots and internal-instance DOM markers", () => {
+  const state = playerState();
+  const game = { stateNode: { state } };
+  const current = { child: game };
+  for (const legacyRoot of [{ _internalRoot: { current } }, { current }]) {
+    const root = { children: [], _reactRootContainer: legacyRoot };
+    assert.equal(findPlayerState({}, { getElementById: () => root }), state);
+  }
+  const domFiber = { return: game };
+  const element = {};
+  Object.defineProperty(element, "__reactInternalInstance$test", {
+    value: domFiber,
+  });
+  const root = { children: [element] };
+  assert.equal(findPlayerState({}, { getElementById: () => root }), state);
+});
+
+test("DOM fibers resolve the committed root, not a stale alternate or companion", () => {
+  const stale = playerState(),
+    active = playerState();
+  active.character.name = "新角色";
+  const current = { child: { stateNode: { state: active } } };
+  const oldRoot = { stateNode: { current } };
+  const oldGame = { stateNode: { state: stale }, return: oldRoot };
+  oldRoot.child = oldGame;
+  const root = { children: [{ __reactFiber$test: { return: oldGame } }] };
+  const page = { mwi: { game: { state: stale } } };
+  assert.equal(findPlayerState(page, { getElementById: () => root }), active);
+  current.child = null;
+  assert.equal(findPlayerState({}, { getElementById: () => root }), null);
+});
+
+test("incomplete candidates do not hide complete state; diagnostics name missing fields", () => {
+  const state = playerState(),
+    partial = playerState();
+  delete partial.noncombatStats;
+  const fiber = {
+    stateNode: { state: partial },
+    child: { stateNode: { state } },
+  };
+  const root = {
+    children: [],
+    __reactContainer$test: { stateNode: { current: fiber } },
+  };
+  assert.equal(findPlayerState({}, { getElementById: () => root }), state);
+  const page = {
+    mwi: { game: { state: partial } },
+    mwi_common: { game: { state } },
+  };
+  assert.equal(findPlayerState(page, {}), state);
+  fiber.child = null;
+  assert.equal(findPlayerState(page, { getElementById: () => root }), partial);
+  assert.throws(() => normalizePlayer(partial, data), /缺少：非战斗属性/);
+});
+
 test("every skill excludes recipes one level above the player and includes the exact unlock level", () => {
   const state = playerState();
   const profile = normalizePlayer(state, data);

@@ -15,51 +15,81 @@ const buffKeys = {
   artisan: "Artisan",
   gourmet: "Gourmet",
 };
+const requiredFields = {
+  character: "角色信息",
+  characterSkillMap: "技能等级",
+  noncombatStats: "非战斗属性",
+  equipmentActionTypeBuffsMap: "装备增益",
+  houseActionTypeBuffsMap: "房屋增益",
+  actionTypeDrinkSlotsMap: "饮品槽",
+};
+const missingFields = (state) =>
+  Object.keys(requiredFields).filter((key) => !state?.[key]);
+
+// DOM Fibers can point at the previous render. Ascend to the root and use
+// FiberRoot.current, never alternate (which can contain an old character).
+function currentTree(fiber) {
+  const seen = new Set();
+  while (fiber?.return && !seen.has(fiber) && seen.size < 250) {
+    seen.add(fiber);
+    fiber = fiber.return;
+  }
+  return fiber?.stateNode?.current || fiber;
+}
 
 // Read only a mounted Game component. No socket interception, game actions or account data storage.
 export function findPlayerState(page, doc) {
-  for (const game of [page.mwi?.game, page.mwi_common?.game]) {
-    if (game?.state?.character && game.state.characterSkillMap)
-      return game.state;
-  }
-  const root = doc.getElementById("root");
-  if (!root) return null;
+  const root = doc.getElementById?.("root");
   const stack = [];
-  for (const el of [root, ...root.children]) {
-    for (const key of Object.keys(el)) {
-      if (key.startsWith("__reactFiber$")) stack.push(el[key]);
-      if (key.startsWith("__reactContainer$"))
-        stack.push(el[key].stateNode?.current || el[key]);
+  for (const el of [root, ...(root?.children || [])]) {
+    for (const key of Object.getOwnPropertyNames(el || {})) {
+      if (
+        key.startsWith("__reactFiber$") ||
+        key.startsWith("__reactInternalInstance$") ||
+        key.startsWith("__reactContainer$")
+      )
+        stack.push(currentTree(el[key]));
     }
   }
+  // React 16/legacy ReactDOM.render uses neither __reactContainer$ nor
+  // __reactFiber$: its root lives here and DOM nodes use __reactInternalInstance$.
+  const legacyRoot = root?._reactRootContainer;
+  stack.push(legacyRoot?._internalRoot?.current || legacyRoot?.current);
   const seen = new Set();
+  let incomplete = null;
+  const consider = (state) => {
+    if (!state?.character || !state.characterSkillMap) return false;
+    if (!missingFields(state).length) return true;
+    if (
+      !incomplete ||
+      missingFields(state).length < missingFields(incomplete).length
+    )
+      incomplete = state;
+    return false;
+  };
   while (stack.length && seen.size < 50000) {
     const fiber = stack.pop();
     if (!fiber || seen.has(fiber)) continue;
     seen.add(fiber);
     const state = fiber.stateNode?.state;
-    if (
-      state?.character &&
-      state.characterSkillMap &&
-      state.equipmentActionTypeBuffsMap
-    )
-      return state;
+    if (consider(state)) return state;
     stack.push(fiber.child, fiber.sibling);
   }
-  return null;
+  // Prefer the mounted tree; a companion plugin can retain an old Game instance.
+  if (incomplete) return incomplete;
+  for (const game of [page.mwi?.game, page.mwi_common?.game]) {
+    if (consider(game?.state)) return game.state;
+  }
+  return incomplete;
 }
 
 export function normalizePlayer(state, data) {
-  if (
-    !state?.character ||
-    !state.characterSkillMap ||
-    !state.noncombatStats ||
-    !state.equipmentActionTypeBuffsMap ||
-    !state.houseActionTypeBuffsMap ||
-    !state.actionTypeDrinkSlotsMap
-  )
+  const missing = missingFields(state);
+  if (missing.length)
     throw new Error(
-      "尚未读到完整角色数据，请进入游戏后重试；若已登录，请刷新游戏页面。",
+      state
+        ? `尚未读到完整角色数据，缺少：${missing.map((key) => requiredFields[key]).join("、")}。请等待游戏加载完成后重试。`
+        : "尚未读到完整角色数据：未找到已登录的游戏角色，请进入游戏后重试。",
     );
   const skills = {};
   for (const skill of Object.keys(SKILLS)) {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MWI 银河生产利润指数
 // @namespace    https://github.com/dakokili/MWIindex
-// @version      1.3.0
+// @version      1.3.1
 // @description  三采、三制造、饮食与八个技能的税后利润指数，真实历史成交量，日周月K线。
 // @author       MWIindex contributors
 // @homepageURL  https://github.com/dakokili/MWIindex
@@ -928,37 +928,62 @@ SOFTWARE.
     artisan: "Artisan",
     gourmet: "Gourmet"
   };
-  function findPlayerState(page, doc) {
-    for (const game of [page.mwi?.game, page.mwi_common?.game]) {
-      if (game?.state?.character && game.state.characterSkillMap)
-        return game.state;
+  var requiredFields = {
+    character: "\u89D2\u8272\u4FE1\u606F",
+    characterSkillMap: "\u6280\u80FD\u7B49\u7EA7",
+    noncombatStats: "\u975E\u6218\u6597\u5C5E\u6027",
+    equipmentActionTypeBuffsMap: "\u88C5\u5907\u589E\u76CA",
+    houseActionTypeBuffsMap: "\u623F\u5C4B\u589E\u76CA",
+    actionTypeDrinkSlotsMap: "\u996E\u54C1\u69FD"
+  };
+  var missingFields = (state) => Object.keys(requiredFields).filter((key) => !state?.[key]);
+  function currentTree(fiber) {
+    const seen = /* @__PURE__ */ new Set();
+    while (fiber?.return && !seen.has(fiber) && seen.size < 250) {
+      seen.add(fiber);
+      fiber = fiber.return;
     }
-    const root = doc.getElementById("root");
-    if (!root) return null;
+    return fiber?.stateNode?.current || fiber;
+  }
+  function findPlayerState(page, doc) {
+    const root = doc.getElementById?.("root");
     const stack = [];
-    for (const el of [root, ...root.children]) {
-      for (const key of Object.keys(el)) {
-        if (key.startsWith("__reactFiber$")) stack.push(el[key]);
-        if (key.startsWith("__reactContainer$"))
-          stack.push(el[key].stateNode?.current || el[key]);
+    for (const el of [root, ...root?.children || []]) {
+      for (const key of Object.getOwnPropertyNames(el || {})) {
+        if (key.startsWith("__reactFiber$") || key.startsWith("__reactInternalInstance$") || key.startsWith("__reactContainer$"))
+          stack.push(currentTree(el[key]));
       }
     }
+    const legacyRoot = root?._reactRootContainer;
+    stack.push(legacyRoot?._internalRoot?.current || legacyRoot?.current);
     const seen = /* @__PURE__ */ new Set();
+    let incomplete = null;
+    const consider = (state) => {
+      if (!state?.character || !state.characterSkillMap) return false;
+      if (!missingFields(state).length) return true;
+      if (!incomplete || missingFields(state).length < missingFields(incomplete).length)
+        incomplete = state;
+      return false;
+    };
     while (stack.length && seen.size < 5e4) {
       const fiber = stack.pop();
       if (!fiber || seen.has(fiber)) continue;
       seen.add(fiber);
       const state = fiber.stateNode?.state;
-      if (state?.character && state.characterSkillMap && state.equipmentActionTypeBuffsMap)
-        return state;
+      if (consider(state)) return state;
       stack.push(fiber.child, fiber.sibling);
     }
-    return null;
+    if (incomplete) return incomplete;
+    for (const game of [page.mwi?.game, page.mwi_common?.game]) {
+      if (consider(game?.state)) return game.state;
+    }
+    return incomplete;
   }
   function normalizePlayer(state, data) {
-    if (!state?.character || !state.characterSkillMap || !state.noncombatStats || !state.equipmentActionTypeBuffsMap || !state.houseActionTypeBuffsMap || !state.actionTypeDrinkSlotsMap)
+    const missing = missingFields(state);
+    if (missing.length)
       throw new Error(
-        "\u5C1A\u672A\u8BFB\u5230\u5B8C\u6574\u89D2\u8272\u6570\u636E\uFF0C\u8BF7\u8FDB\u5165\u6E38\u620F\u540E\u91CD\u8BD5\uFF1B\u82E5\u5DF2\u767B\u5F55\uFF0C\u8BF7\u5237\u65B0\u6E38\u620F\u9875\u9762\u3002"
+        state ? `\u5C1A\u672A\u8BFB\u5230\u5B8C\u6574\u89D2\u8272\u6570\u636E\uFF0C\u7F3A\u5C11\uFF1A${missing.map((key) => requiredFields[key]).join("\u3001")}\u3002\u8BF7\u7B49\u5F85\u6E38\u620F\u52A0\u8F7D\u5B8C\u6210\u540E\u91CD\u8BD5\u3002` : "\u5C1A\u672A\u8BFB\u5230\u5B8C\u6574\u89D2\u8272\u6570\u636E\uFF1A\u672A\u627E\u5230\u5DF2\u767B\u5F55\u7684\u6E38\u620F\u89D2\u8272\uFF0C\u8BF7\u8FDB\u5165\u6E38\u620F\u540E\u91CD\u8BD5\u3002"
       );
     const skills = {};
     for (const skill of Object.keys(SKILLS)) {
@@ -1026,7 +1051,7 @@ SOFTWARE.
   }
 
   // package.json
-  var version = "1.3.0";
+  var version = "1.3.1";
 
   // src/main.js
   function node(tag, attrs = {}, text) {
