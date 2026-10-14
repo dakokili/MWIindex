@@ -7,9 +7,10 @@
 ## 安装
 
 1. 浏览器安装 [Tampermonkey](https://www.tampermonkey.net/)；按扩展提示启用用户脚本权限。
-2. 当前可点击 **[安装脚本](https://raw.githubusercontent.com/dakokili/MWIindex/main/mwi-profit-indices.user.js)**，在 Tampermonkey 弹窗确认安装；若扩展没有接管链接，可将根目录 `.user.js` 内容粘贴到新建脚本。
+2. 打开 **[Greasy Fork 安装页](https://greasyfork.org/zh-CN/scripts/600168)**，点击「安装此脚本」，在 Tampermonkey 弹窗中确认安装。
+3. 刷新游戏页面，点击右下角「利润指数」。保持脚本管理器的自动更新开启，以接收后续版本。
 
-Greasy Fork 的发布文件与同步说明已准备好，首次发布待所有者登录完成。步骤见 **[Greasy Fork 发布与自动更新](docs/greasyfork-publishing.md)**；发布后将这里替换为实际安装页链接。
+原来从 GitHub 或粘贴代码安装的用户，可通过 Greasy Fork 页面重新安装一次以切换更新来源，确认没有同时启用两份脚本。维护者的同步配置与更新流程见 **[Greasy Fork 发布与自动更新](docs/greasyfork-publishing.md)**。
 
 ## 使用
 

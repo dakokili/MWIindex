@@ -1,22 +1,22 @@
-# Greasy Fork 首次发布与更新
+# Greasy Fork 发布与更新
 
-仓库已经准备好可直接导入的发布文件；**首次发布仍需仓库所有者登录 Greasy Fork 创建脚本**。本文件不是已发布成功的记录。取得实际脚本地址后，将它补到 README 的安装入口。
+已于 2026-10-14 发布，脚本 ID 为 **600168**，详细介绍已由维护者添加。
 
-## 首次发布（只做一次）
+- 正式安装页：[MWI 银河生产利润指数](https://greasyfork.org/zh-CN/scripts/600168)。
+- 后续更新复用这个发布页，不要重新导入创建另一份脚本。
+- 发布页说明文案保存在 [greasyfork-description.md](greasyfork-description.md)。
 
-1. 登录 [Greasy Fork](https://greasyfork.org/zh-CN/users/sign_in)，可使用 GitHub 登录。
-2. 打开 [导入脚本](https://greasyfork.org/zh-CN/import)，填写以下 URL，语言选择 JavaScript，同步方式选择 **自动**，提交导入：
+## 确认同步配置
 
-   ```text
-   https://raw.githubusercontent.com/dakokili/MWIindex/main/mwi-profit-indices.user.js
-   ```
+在已发布脚本的管理页确认同步方式为 **自动**，同步地址为：
 
-   必须使用 `main` 分支地址，不要填某次提交的 SHA 地址；后者永远不会获取后续修改。
-3. 在脚本页面检查名称、版本和适用网站；设置内容语言为简体中文，将 [发布页说明](greasyfork-description.md) 的正文作为详细介绍（Markdown）。按照页面提示完成首次发布。
-4. 将生成的 **Greasy Fork 脚本详情页链接** 发给用户。用户安装 Tampermonkey 后，点击页面上的“安装此脚本”，再在扩展窗口确认，即可安装。
-5. 原来从 GitHub 或粘贴代码安装的用户，建议通过该 Greasy Fork 页面重新安装一次，以建立 Greasy Fork 更新来源。保持 `@name` 和 `@namespace` 不变，并检查扩展中没有同时启用两份脚本。
+```text
+https://raw.githubusercontent.com/dakokili/MWIindex/main/mwi-profit-indices.user.js
+```
 
-本仓库不伪造尚未分配的 Greasy Fork 脚本 ID。发布后把真实链接补入 README 即可。
+必须使用 `main` 分支地址，不要填某次提交的 SHA 地址；后者不会获取后续修改。同步方式与同步错误需登录维护者账号查看，公开安装链接本身不代表已启用自动同步。
+
+用户安装 Tampermonkey 后，通过正式安装页点击「安装此脚本」并在扩展窗口确认。原来从 GitHub 或粘贴代码安装的用户，建议通过此页面重新安装一次，以建立 Greasy Fork 更新来源；保持 `@name` 和 `@namespace` 不变，并检查没有同时启用两份脚本。
 
 ## 以后如何推送更新
 
@@ -37,7 +37,7 @@ git push origin HEAD:main
 
 ## 可选：推送后立即通知 Greasy Fork
 
-自动同步已经可以使用。若要减少等待，可在首次导入完成后配置官方 GitHub Webhook：
+开启自动同步后，若要减少等待，可配置官方 GitHub Webhook：
 
 1. 登录并打开 [Greasy Fork Webhook 设置说明](https://greasyfork.org/zh-CN/users/webhook-info)，取得该账号专属的 Payload URL / Secret（以页面实际字段为准）。
 2. 打开 [MWIindex 的 Webhooks 设置](https://github.com/dakokili/MWIindex/settings/hooks)，按 Greasy Fork 页面说明创建 GitHub Webhook，使用 `application/json`，选择 push 事件。
