@@ -6,7 +6,7 @@ import { storage, loadHistory } from "./transport.js";
 import { renderChart, money } from "./chart.js";
 
 import { readPlayer } from "./player.js";
-const VERSION = "1.1.0";
+const VERSION = "1.1.1";
 function node(tag, attrs = {}, text) {
   const e = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
@@ -34,6 +34,7 @@ export function mount() {
     period = "day",
     view = "overview",
     range = 60,
+    detailsOpen = false,
     options = { ...DEFAULT_OPTIONS };
   const panel = node("section", {
     class: "panel",
@@ -92,8 +93,13 @@ export function mount() {
     render();
   });
   const refresh = button("刷新行情", () => refreshData(true));
+  const updateEquipment = button("更新装备数据", () =>
+    refreshData(false, true, true),
+  );
+  updateEquipment.disabled = true;
+  updateEquipment.title = "玩家模式下重新读取等级、装备、饮食和房屋等数据";
   const modeBtn = button("切换模式：默认配装", () =>
-    refreshData(false, !options.profile),
+    refreshData(false, !options.profile, true),
   );
   const exportBtn = button("导出 JSON", () => {
     if (!result) return;
@@ -119,7 +125,14 @@ export function mount() {
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   });
-  toolbar.append(segments, rangeSelect, modeBtn, refresh, exportBtn);
+  toolbar.append(
+    segments,
+    rangeSelect,
+    modeBtn,
+    refresh,
+    updateEquipment,
+    exportBtn,
+  );
   panel.append(toolbar);
   const tabs = node("div", { class: "tabs" });
   for (const [k, label] of [
@@ -151,7 +164,7 @@ export function mount() {
     node(
       "p",
       { class: "muted" },
-      "产物、精华、开箱收益按买一；原料和饮食按卖一（有金币商店价时取更低值）。卖出税率固定 4%。默认模式：100 级、80 级工具 +10、房屋 4 级、特殊装备 +10，逐样本选最佳饮食。玩家模式：使用当前角色等级、装备/房屋等增益及所选饮食，假定饮食持续补充。换装后点击刷新行情。两种模式均含随机收入期望。",
+      "产物、精华、开箱收益按买一；原料和饮食按卖一（有金币商店价时取更低值）。卖出税率固定 4%。默认模式：100 级、80 级工具 +10、房屋 4 级、特殊装备 +10，逐样本选最佳饮食。玩家模式：使用当前角色等级、装备/房屋等增益及所选饮食，只纳入该技能基础等级可生产的品种，假定饮食持续补充。换装后点击“更新装备数据”。两种模式均含随机收入期望。",
     ),
   );
   settings.append(
@@ -297,6 +310,14 @@ export function mount() {
         summary = node("summary", {}, "成分与最佳饮食"),
         table = node("div");
       detail.append(summary, table);
+      detail.open = detailsOpen;
+      detail.addEventListener("toggle", () => {
+        // Ignore queued events from replaced cards and synchronized siblings.
+        if (!detail.isConnected || detail.open === detailsOpen) return;
+        detailsOpen = detail.open;
+        for (const other of cards.querySelectorAll(".card details"))
+          other.open = detailsOpen;
+      });
       function select(b) {
         ch.querySelector(".value").textContent = money(b.mean) + " / 日";
         stats.textContent = `${b.day} · 开 ${money(b.open)}  高 ${money(b.high)}  低 ${money(b.low)}  收 ${money(b.close)} · 日均 ${money(b.mean)} · ${b.samples} 个样本${dayKey(b.last) === dayKey(Date.now() / 1000) ? "（含今日未完成数据）" : ""}${b.days ? " / " + b.days + " 日" : ""}${b.samples === 1 ? "（单样本，无法观测日内波动）" : ""}`;
@@ -324,16 +345,23 @@ export function mount() {
       cards.append(card);
     }
   }
-  async function refreshData(force, playerMode = !!options.profile) {
+  async function refreshData(
+    force,
+    playerMode = !!options.profile,
+    updatePlayer = false,
+  ) {
     if (busy) return;
     busy = true;
     refresh.disabled = true;
+    updateEquipment.disabled = true;
     modeBtn.disabled = true;
     status.className = "status";
     try {
       const nextOptions = {
         ...DEFAULT_OPTIONS,
-        ...(playerMode ? { profile: readPlayer(data) } : {}),
+        ...(playerMode
+          ? { profile: updatePlayer ? readPlayer(data) : options.profile }
+          : {}),
       };
       const nextSource = await loadHistory(data, nextOptions, {
         cache,
@@ -380,6 +408,7 @@ export function mount() {
     } finally {
       busy = false;
       refresh.disabled = false;
+      updateEquipment.disabled = !options.profile;
       modeBtn.disabled = false;
     }
   }

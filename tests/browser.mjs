@@ -106,6 +106,36 @@ try {
   assert.equal(await page.locator(".card").count(), 3);
   assert.equal(await page.locator(".chart svg").count(), 3);
   assert.equal(await page.locator("input").count(), 0);
+  assert.equal(
+    await page
+      .getByRole("button", { name: "更新装备数据", exact: true })
+      .isDisabled(),
+    true,
+  );
+  async function checkDetails(open, count) {
+    await page.waitForFunction(
+      ({ open, count }) => {
+        const details = document
+          .getElementById("mwi-profit-index-host")
+          .shadowRoot.querySelectorAll(".card details");
+        return (
+          details.length === count && [...details].every((d) => d.open === open)
+        );
+      },
+      { open, count },
+    );
+  }
+  await checkDetails(false, 3);
+  await page.locator(".card summary").first().click();
+  await checkDetails(true, 3);
+  await page.getByRole("button", { name: "挤奶", exact: true }).click();
+  await checkDetails(true, 1);
+  await page.locator(".card summary").click();
+  await checkDetails(false, 1);
+  await page.getByRole("button", { name: "综合指数", exact: true }).click();
+  await checkDetails(false, 3);
+  await page.locator(".card summary").first().click();
+  await checkDetails(true, 3);
   const defaultValues = await page.locator(".value").allTextContents();
   assert.ok(defaultValues.every((t) => t.includes("M")));
   const mode = page.getByRole("button", { name: /切换模式/ });
@@ -136,13 +166,45 @@ try {
     defaultValues,
   );
   assert.match(await page.locator("header .muted").innerText(), /测试角色/);
-  // A second role/configuration is read on refresh, not cached from the first read.
+  await checkDetails(true, 3);
+  assert.equal(
+    await page
+      .getByRole("button", { name: "更新装备数据", exact: true })
+      .count(),
+    1,
+  );
+  assert.equal(
+    await page.getByRole("button", { name: "刷新行情", exact: true }).count(),
+    1,
+  );
+  // Market refresh keeps the configuration; the separate equipment button reads a new role/configuration.
   await page.evaluate(() => {
     window.fixturePlayer.character.name = "第二角色";
     for (const s of Object.values(window.fixturePlayer.characterSkillMap))
       s.level = 19;
   });
+  const beforeRefresh = await page.locator(".value").allTextContents();
   await page.getByRole("button", { name: "刷新行情", exact: true }).click();
+  await page.waitForFunction(() =>
+    [
+      ...document
+        .getElementById("mwi-profit-index-host")
+        .shadowRoot.querySelectorAll("button"),
+    ].some((b) => b.textContent === "刷新行情" && !b.disabled),
+  );
+  assert.match(await page.locator("header .muted").innerText(), /测试角色/);
+  assert.deepEqual(
+    await page.locator(".value").allTextContents(),
+    beforeRefresh,
+  );
+  await checkDetails(true, 3);
+  assert.equal(
+    await page
+      .getByRole("button", { name: "更新装备数据", exact: true })
+      .isDisabled(),
+    false,
+  );
+  await page.getByRole("button", { name: "更新装备数据", exact: true }).click();
   await page.getByText(/请检查角色等级和数据源。/).waitFor();
   assert.match(await page.locator("header .muted").innerText(), /第二角色/);
   assert.equal(await page.locator(".chart svg").count(), 0);
@@ -154,7 +216,13 @@ try {
     await page.locator(".value").allTextContents(),
     defaultValues,
   );
+  assert.equal(
+    await page.getByRole("button", { name: "刷新行情", exact: true }).count(),
+    1,
+  );
+  await checkDetails(true, 3);
   await page.getByRole("button", { name: "周线", exact: true }).click();
+  await checkDetails(true, 3);
   assert.equal(
     await page
       .getByRole("button", { name: "周线", exact: true })
@@ -165,9 +233,21 @@ try {
   assert.equal(await page.locator(".chart svg").count(), 3);
   await page.getByRole("button", { name: "采集", exact: true }).click();
   assert.equal(await page.locator(".card").count(), 1);
+  await checkDetails(true, 1);
+  await page.locator(".card summary").focus();
+  await page.keyboard.press("Enter");
+  await checkDetails(false, 1);
+  await page.getByRole("button", { name: "伐木", exact: true }).click();
+  await checkDetails(false, 1);
+  await page.getByLabel("显示时间范围").selectOption("30");
+  await checkDetails(false, 1);
+  await page.getByRole("button", { name: "采集", exact: true }).click();
+  await checkDetails(false, 1);
   await page.locator(".card summary").click();
+  await checkDetails(true, 1);
   assert.ok((await page.locator("tbody tr").count()) > 0);
   await page.getByRole("button", { name: "日线", exact: true }).click();
+  await checkDetails(true, 1);
   await page.locator("svg g").first().focus();
   await page.keyboard.press("Enter");
   assert.match(await page.locator(".stats").innerText(), /开 .*高 .*低 .*收/);
@@ -229,7 +309,7 @@ try {
   await isolated.close();
   assert.deepEqual(errors, []);
   console.log(
-    "Browser PASS: mount, M units, fixed rules, player modes, missing role, configuration refresh, periods, constituents, keyboard, mobile, export, offline cache and retryable failure.",
+    "Browser PASS: mount, M units, fixed rules, player modes, missing role, configuration refresh, shared details across tabs/periods/ranges/modes, periods, constituents, keyboard, mobile, export, offline cache and retryable failure.",
   );
 } finally {
   await browser.close();

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MWI 银河生产利润指数
 // @namespace    https://github.com/dakokili/MWIindex
-// @version      1.1.0
+// @version      1.1.1
 // @description  三采、三制造、饮食与八个技能的税后利润指数，真实历史成交量，日周月K线。
 // @author       MWIindex contributors
 // @match        https://www.milkywayidle.com/*
@@ -942,7 +942,7 @@ SOFTWARE.
   }
 
   // src/main.js
-  var VERSION = "1.1.0";
+  var VERSION = "1.1.1";
   function node(tag, attrs = {}, text) {
     const e = document.createElement(tag);
     for (const [k, v] of Object.entries(attrs)) {
@@ -964,7 +964,7 @@ SOFTWARE.
     const shadow = host.attachShadow({ mode: "open" });
     shadow.append(node("style", {}, style_default));
     const cache = storage();
-    let result = null, source = null, busy = false, period = "day", view = "overview", range = 60, options = { ...DEFAULT_OPTIONS };
+    let result = null, source = null, busy = false, period = "day", view = "overview", range = 60, detailsOpen = false, options = { ...DEFAULT_OPTIONS };
     const panel = node("section", {
       class: "panel",
       hidden: "",
@@ -1021,9 +1021,15 @@ SOFTWARE.
       render();
     });
     const refresh = button("\u5237\u65B0\u884C\u60C5", () => refreshData(true));
+    const updateEquipment = button(
+      "\u66F4\u65B0\u88C5\u5907\u6570\u636E",
+      () => refreshData(false, true, true)
+    );
+    updateEquipment.disabled = true;
+    updateEquipment.title = "\u73A9\u5BB6\u6A21\u5F0F\u4E0B\u91CD\u65B0\u8BFB\u53D6\u7B49\u7EA7\u3001\u88C5\u5907\u3001\u996E\u98DF\u548C\u623F\u5C4B\u7B49\u6570\u636E";
     const modeBtn = button(
       "\u5207\u6362\u6A21\u5F0F\uFF1A\u9ED8\u8BA4\u914D\u88C5",
-      () => refreshData(false, !options.profile)
+      () => refreshData(false, !options.profile, true)
     );
     const exportBtn = button("\u5BFC\u51FA JSON", () => {
       if (!result) return;
@@ -1048,7 +1054,14 @@ SOFTWARE.
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 1e3);
     });
-    toolbar.append(segments, rangeSelect, modeBtn, refresh, exportBtn);
+    toolbar.append(
+      segments,
+      rangeSelect,
+      modeBtn,
+      refresh,
+      updateEquipment,
+      exportBtn
+    );
     panel.append(toolbar);
     const tabs = node("div", { class: "tabs" });
     for (const [k, label] of [
@@ -1080,7 +1093,7 @@ SOFTWARE.
       node(
         "p",
         { class: "muted" },
-        "\u4EA7\u7269\u3001\u7CBE\u534E\u3001\u5F00\u7BB1\u6536\u76CA\u6309\u4E70\u4E00\uFF1B\u539F\u6599\u548C\u996E\u98DF\u6309\u5356\u4E00\uFF08\u6709\u91D1\u5E01\u5546\u5E97\u4EF7\u65F6\u53D6\u66F4\u4F4E\u503C\uFF09\u3002\u5356\u51FA\u7A0E\u7387\u56FA\u5B9A 4%\u3002\u9ED8\u8BA4\u6A21\u5F0F\uFF1A100 \u7EA7\u300180 \u7EA7\u5DE5\u5177 +10\u3001\u623F\u5C4B 4 \u7EA7\u3001\u7279\u6B8A\u88C5\u5907 +10\uFF0C\u9010\u6837\u672C\u9009\u6700\u4F73\u996E\u98DF\u3002\u73A9\u5BB6\u6A21\u5F0F\uFF1A\u4F7F\u7528\u5F53\u524D\u89D2\u8272\u7B49\u7EA7\u3001\u88C5\u5907/\u623F\u5C4B\u7B49\u589E\u76CA\u53CA\u6240\u9009\u996E\u98DF\uFF0C\u5047\u5B9A\u996E\u98DF\u6301\u7EED\u8865\u5145\u3002\u6362\u88C5\u540E\u70B9\u51FB\u5237\u65B0\u884C\u60C5\u3002\u4E24\u79CD\u6A21\u5F0F\u5747\u542B\u968F\u673A\u6536\u5165\u671F\u671B\u3002"
+        "\u4EA7\u7269\u3001\u7CBE\u534E\u3001\u5F00\u7BB1\u6536\u76CA\u6309\u4E70\u4E00\uFF1B\u539F\u6599\u548C\u996E\u98DF\u6309\u5356\u4E00\uFF08\u6709\u91D1\u5E01\u5546\u5E97\u4EF7\u65F6\u53D6\u66F4\u4F4E\u503C\uFF09\u3002\u5356\u51FA\u7A0E\u7387\u56FA\u5B9A 4%\u3002\u9ED8\u8BA4\u6A21\u5F0F\uFF1A100 \u7EA7\u300180 \u7EA7\u5DE5\u5177 +10\u3001\u623F\u5C4B 4 \u7EA7\u3001\u7279\u6B8A\u88C5\u5907 +10\uFF0C\u9010\u6837\u672C\u9009\u6700\u4F73\u996E\u98DF\u3002\u73A9\u5BB6\u6A21\u5F0F\uFF1A\u4F7F\u7528\u5F53\u524D\u89D2\u8272\u7B49\u7EA7\u3001\u88C5\u5907/\u623F\u5C4B\u7B49\u589E\u76CA\u53CA\u6240\u9009\u996E\u98DF\uFF0C\u53EA\u7EB3\u5165\u8BE5\u6280\u80FD\u57FA\u7840\u7B49\u7EA7\u53EF\u751F\u4EA7\u7684\u54C1\u79CD\uFF0C\u5047\u5B9A\u996E\u98DF\u6301\u7EED\u8865\u5145\u3002\u6362\u88C5\u540E\u70B9\u51FB\u201C\u66F4\u65B0\u88C5\u5907\u6570\u636E\u201D\u3002\u4E24\u79CD\u6A21\u5F0F\u5747\u542B\u968F\u673A\u6536\u5165\u671F\u671B\u3002"
       )
     );
     settings.append(
@@ -1222,6 +1235,13 @@ SOFTWARE.
         card.append(ch);
         const stats = node("p", { class: "stats" }), chart = node("div", { class: "chart" }), detail = node("details"), summary = node("summary", {}, "\u6210\u5206\u4E0E\u6700\u4F73\u996E\u98DF"), table = node("div");
         detail.append(summary, table);
+        detail.open = detailsOpen;
+        detail.addEventListener("toggle", () => {
+          if (!detail.isConnected || detail.open === detailsOpen) return;
+          detailsOpen = detail.open;
+          for (const other of cards.querySelectorAll(".card details"))
+            other.open = detailsOpen;
+        });
         card.append(stats, chart, detail);
         renderChart(chart, bars, select, period);
         if (last) select(last);
@@ -1236,16 +1256,17 @@ SOFTWARE.
         cards.append(card);
       }
     }
-    async function refreshData(force, playerMode = !!options.profile) {
+    async function refreshData(force, playerMode = !!options.profile, updatePlayer = false) {
       if (busy) return;
       busy = true;
       refresh.disabled = true;
+      updateEquipment.disabled = true;
       modeBtn.disabled = true;
       status.className = "status";
       try {
         const nextOptions = {
           ...DEFAULT_OPTIONS,
-          ...playerMode ? { profile: readPlayer(milkonomy_default) } : {}
+          ...playerMode ? { profile: updatePlayer ? readPlayer(milkonomy_default) : options.profile } : {}
         };
         const nextSource = await loadHistory(milkonomy_default, nextOptions, {
           cache,
@@ -1286,6 +1307,7 @@ SOFTWARE.
       } finally {
         busy = false;
         refresh.disabled = false;
+        updateEquipment.disabled = !options.profile;
         modeBtn.disabled = false;
       }
     }

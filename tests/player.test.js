@@ -93,3 +93,57 @@ test("finds mounted React Game without companion plugins; follows current tree a
   state.character = null;
   assert.equal(findPlayerState({}, { getElementById: () => root }), null);
 });
+
+test("every skill excludes recipes one level above the player and includes the exact unlock level", () => {
+  const state = playerState();
+  const profile = normalizePlayer(state, data);
+  const options = { ...DEFAULT_OPTIONS, profile };
+  for (const skill of Object.keys(profile.skills)) {
+    const action = candidates(data).find(
+      (a) => a.skill === skill && a.level > 20,
+    );
+    assert.ok(action, skill);
+    profile.skills[skill].level = action.level - 1;
+    assert.ok(
+      !compileModel(data, options).some((m) => m.action.id === action.id),
+      `${skill}: level too low`,
+    );
+    profile.skills[skill].level = action.level;
+    assert.ok(
+      compileModel(data, options).some((m) => m.action.id === action.id),
+      `${skill}: exact level`,
+    );
+  }
+});
+
+test("actual daily constituents respect each skill level and do not substitute an unavailable skill in composites", async () => {
+  const { buildIndices } = await import("../src/indices.js");
+  const { default: snapshots } = await import(
+    "./fixtures/official-snapshots.json",
+    { with: { type: "json" } }
+  );
+  const profile = normalizePlayer(playerState(), data);
+  Object.values(profile.skills).forEach((s, i) => {
+    s.level = 20 + i * 10;
+  });
+  profile.skills.milking.level = 19;
+  const result = await buildIndices(data, snapshots, {
+    ...DEFAULT_OPTIONS,
+    profile,
+  });
+  assert.equal(result.series.milking.length, 0);
+  assert.equal(result.series.gathering.length, 0);
+  let members = 0;
+  for (const [skill, config] of Object.entries(profile.skills)) {
+    for (const bar of result.series[skill])
+      for (const member of bar.members) {
+        const action = data.actions.find((a) => a.id === member.id);
+        assert.ok(
+          action.level >= 20 && action.level <= config.level,
+          member.id,
+        );
+        members++;
+      }
+  }
+  assert.ok(members > 0);
+});
