@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MWI 银河生产利润指数
 // @namespace    https://github.com/dakokili/MWIindex
-// @version      1.3.2
+// @version      1.3.3
 // @description  三采、三制造、饮食与八个技能的税后利润指数，真实历史成交量，日周月K线。
 // @author       MWIindex contributors
 // @homepageURL  https://github.com/dakokili/MWIindex
@@ -536,6 +536,14 @@ SOFTWARE.
 
   // src/transport.js
   var CACHE_VERSION = 1;
+  var HISTORY_CHECK_INTERVAL = 6 * 60 * 60 * 1e3;
+  var CURRENT_CHECK_INTERVAL = 5 * 60 * 1e3;
+  function isFresh(checkedAt, now, interval) {
+    return Number.isFinite(checkedAt) && now >= checkedAt && now - checkedAt < interval;
+  }
+  function validShard(payload, id) {
+    return payload?.itemHrid === id && Number(payload.variant) === 0 && Array.isArray(payload.rows);
+  }
   function request(url, attempt = 0) {
     return new Promise((resolve, reject) => {
       GM_xmlhttpRequest({
@@ -614,18 +622,28 @@ SOFTWARE.
         warnings.push("\u672C\u5730\u7F13\u5B58\u4E0D\u53EF\u5199\uFF1B\u672C\u6B21\u6570\u636E\u4ECD\u53EF\u663E\u793A");
       }
     };
-    const previous = await safeGet("snapshots") || [];
-    let manifest;
+    const storedSnapshots = await safeGet("snapshots");
+    const previous = Array.isArray(storedSnapshots) ? storedSnapshots : [];
+    let manifest, cachedManifest;
     try {
-      manifest = validateManifest(await request(MANIFEST_URL));
-      await safeSet("manifest", manifest);
-    } catch (e) {
-      manifest = await safeGet("manifest");
-      warnings.push(`\u5386\u53F2\u76EE\u5F55\u66F4\u65B0\u5931\u8D25\uFF1A${e.message}`);
-      if (!manifest) {
-        if (previous.length)
-          return { snapshots: previous, warnings, offline: true };
-        throw new Error("\u5386\u53F2\u6570\u636E\u6E90\u4E0D\u53EF\u7528\uFF0C\u4E14\u6CA1\u6709\u672C\u5730\u7F13\u5B58\u3002\u8BF7\u7A0D\u540E\u91CD\u8BD5\u3002");
+      cachedManifest = validateManifest(await safeGet("manifest"));
+    } catch {
+    }
+    if (!force && cachedManifest && isFresh(cachedManifest.checkedAt, now, HISTORY_CHECK_INTERVAL)) {
+      manifest = cachedManifest;
+    } else {
+      try {
+        progress("\u68C0\u67E5\u5386\u53F2\u884C\u60C5\u66F4\u65B0\u2026");
+        manifest = validateManifest(await request(MANIFEST_URL));
+        await safeSet("manifest", { ...manifest, checkedAt: now });
+      } catch (e) {
+        manifest = cachedManifest;
+        warnings.push(`\u5386\u53F2\u76EE\u5F55\u66F4\u65B0\u5931\u8D25\uFF1A${e.message}`);
+        if (!manifest) {
+          if (previous.length)
+            return { snapshots: previous, warnings, offline: true };
+          throw new Error("\u5386\u53F2\u6570\u636E\u6E90\u4E0D\u53EF\u7528\uFF0C\u4E14\u6CA1\u6709\u672C\u5730\u7F13\u5B58\u3002\u8BF7\u7A0D\u540E\u91CD\u8BD5\u3002");
+        }
       }
     }
     const needed = requiredItems(data, options);
@@ -637,14 +655,13 @@ SOFTWARE.
         return null;
       }
       const key = "shard:" + id, cached = await safeGet(key);
-      if (!force && cached?.updated === entry.latestTime && cached?.rows === entry.rows) {
+      if (validShard(cached?.data, id) && cached?.updated === entry.latestTime && cached?.rows === entry.rows && (cached.path === void 0 || cached.path === entry.path) && (cached.retention === void 0 || cached.retention === (entry.hourlyRetentionDays ?? 60))) {
         progress(`\u8BFB\u53D6\u884C\u60C5 ${++done}/${needed.length}`);
         return cached.data;
       }
       try {
         const payload = await request(shardUrl(entry.path));
-        if (payload.itemHrid !== id || Number(payload.variant) !== 0 || !Array.isArray(payload.rows))
-          throw new Error("\u8FD4\u56DE\u7269\u54C1\u4E0D\u5339\u914D");
+        if (!validShard(payload, id)) throw new Error("\u8FD4\u56DE\u7269\u54C1\u4E0D\u5339\u914D");
         const cutoff = manifest.latestSnapshot.timestamp - (entry.hourlyRetentionDays ?? 60) * DAY;
         const trimmed = {
           ...payload,
@@ -653,24 +670,36 @@ SOFTWARE.
         await safeSet(key, {
           updated: entry.latestTime,
           rows: entry.rows,
+          path: entry.path,
+          retention: entry.hourlyRetentionDays ?? 60,
           data: trimmed
         });
         return trimmed;
       } catch (e) {
         warnings.push(`${data.items[id]?.zh || id} \u4E0B\u8F7D\u5931\u8D25\uFF1A${e.message}`);
-        return cached?.data || null;
+        return validShard(cached?.data, id) ? cached.data : null;
       } finally {
         progress(`\u4E0B\u8F7D\u884C\u60C5 ${++done}/${needed.length}`);
       }
     });
     let snapshots = normalizeShards(shards.filter(Boolean), manifest);
+    const cachedCurrent = await safeGet("current");
+    let current;
     try {
-      snapshots = mergeSnapshots(snapshots, [
-        normalizeCurrent(await request(CURRENT_URL), needed)
-      ]);
+      current = normalizeCurrent(cachedCurrent?.data, needed);
+    } catch {
+    }
+    try {
+      if (force || !current || !isFresh(cachedCurrent?.checkedAt, now, CURRENT_CHECK_INTERVAL)) {
+        progress("\u66F4\u65B0\u6700\u65B0\u884C\u60C5\u2026");
+        const payload = await request(CURRENT_URL);
+        current = normalizeCurrent(payload, needed);
+        await safeSet("current", { checkedAt: now, data: payload });
+      }
     } catch (e) {
       warnings.push(`\u6700\u65B0\u5FEB\u7167\u8BFB\u53D6\u5931\u8D25\uFF1A${e.message}`);
     }
+    if (current) snapshots = mergeSnapshots(snapshots, [current]);
     snapshots = mergeSnapshots(previous, snapshots).filter(
       (s) => s.time >= Math.max(manifest.latestSnapshot.timestamp, now / 1e3) - 400 * DAY
     );
@@ -1063,7 +1092,7 @@ SOFTWARE.
   }
 
   // package.json
-  var version = "1.3.2";
+  var version = "1.3.3";
 
   // src/main.js
   function node(tag, attrs = {}, text) {
@@ -1144,6 +1173,7 @@ SOFTWARE.
       render();
     });
     const refresh = button("\u5237\u65B0\u884C\u60C5", () => refreshData(true));
+    refresh.title = "\u7ACB\u5373\u68C0\u67E5\u5386\u53F2\u76EE\u5F55\u548C\u6700\u65B0\u62A5\u4EF7\uFF0C\u4EC5\u4E0B\u8F7D\u7F3A\u5931\u6216\u5DF2\u53D8\u5316\u7684\u5386\u53F2\u5206\u7247";
     const updateEquipment = button(
       "\u66F4\u65B0\u88C5\u5907\u6570\u636E",
       () => refreshData(false, true, true)
@@ -1230,7 +1260,7 @@ SOFTWARE.
     const status = node(
       "p",
       { class: "status", role: "status", "aria-live": "polite" },
-      "\u5C55\u5F00\u540E\u52A0\u8F7D\u516C\u5F00\u884C\u60C5\uFF1B\u9996\u6B21\u7EA6 160 \u4E2A\u5C0F\u5206\u7247\uFF0C\u968F\u540E\u4F7F\u7528\u672C\u5730\u7F13\u5B58\u3002"
+      "\u9996\u6B21\u5C55\u5F00\u4E0B\u8F7D\u5386\u53F2\u884C\u60C5\uFF1B\u4E4B\u540E\u590D\u7528\u672C\u5730\u7F13\u5B58\uFF0C\u5386\u53F2\u6BCF 6 \u5C0F\u65F6\u68C0\u67E5\u3001\u6700\u65B0\u62A5\u4EF7\u6BCF 5 \u5206\u949F\u68C0\u67E5\u3002\u53EF\u70B9\u51FB\u201C\u5237\u65B0\u884C\u60C5\u201D\u7ACB\u5373\u68C0\u67E5\u3002"
     );
     const warnings = node("div"), info = node("p", { class: "source-info muted" }), cards = node("div", { class: "cards" });
     panel.append(status, warnings, info, cards);

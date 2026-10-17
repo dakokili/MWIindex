@@ -1,5 +1,5 @@
 import { chromium } from "playwright-core";
-import { readFile, mkdir } from "node:fs/promises";
+import { readFile, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import assert from "node:assert/strict";
 import snapshots from "./fixtures/official-snapshots.json" with { type: "json" };
@@ -51,19 +51,14 @@ payloads["api.json"] = {
   ),
 };
 const script = await readFile("mwi-profit-indices.user.js", "utf8");
-const browser = await chromium.launch({
+const launchOptions = {
   executablePath:
     process.env.CHROMIUM_PATH ||
     (existsSync("/usr/bin/chromium") ? "/usr/bin/chromium" : undefined),
   headless: true,
   args: ["--no-sandbox"],
-});
-try {
-  const page = await browser.newPage({
-      viewport: { width: 1400, height: 1100 },
-    }),
-    errors = [];
-  page.on("pageerror", (e) => errors.push(e.message));
+};
+async function configurePage(page) {
   await page.route("https://www.milkywayidle.com/**", (route) =>
     route.fulfill({
       contentType: "text/html",
@@ -102,6 +97,15 @@ try {
     },
     { payloads, latest },
   );
+}
+const browser = await chromium.launch(launchOptions);
+try {
+  const page = await browser.newPage({
+      viewport: { width: 1400, height: 1100 },
+    }),
+    errors = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await configurePage(page);
   await page.goto("https://www.milkywayidle.com/game");
   await page.addScriptTag({ content: script });
   const launch = page.getByRole("button", { name: "◈ 利润指数" });
@@ -408,11 +412,30 @@ try {
   const download = page.waitForEvent("download");
   await page.getByRole("button", { name: "导出 JSON", exact: true }).click();
   assert.equal((await download).suggestedFilename(), "mwi-profit-indices.json");
-  // Fresh mount while offline must retain IndexedDB data and disclose degraded source status.
+  // A fresh page must reuse persistent caches without any network requests.
+  await page.reload();
+  await page.addScriptTag({ content: script });
+  await page.getByRole("button", { name: "◈ 利润指数" }).click();
+  await page.getByText("行情与指数已更新。", { exact: true }).waitFor();
+  assert.equal(await page.evaluate(() => window.requests), 0);
+  assert.equal(await page.locator(".chart svg").count(), 3);
+  // Manual refresh checks the two small endpoints, not every history shard.
+  await page.getByRole("button", { name: "刷新行情", exact: true }).click();
+  await page.waitForFunction(() => {
+    const root = document.getElementById("mwi-profit-index-host").shadowRoot;
+    return [...root.querySelectorAll("button")].some(
+      (b) => b.textContent === "刷新行情" && !b.disabled,
+    );
+  });
+  assert.equal(await page.evaluate(() => window.requests), 2);
+  // Offline fresh caches need no connection; an explicit refresh discloses failure.
   await page.reload();
   await page.evaluate(() => (window.mockOffline = true));
   await page.addScriptTag({ content: script });
   await page.getByRole("button", { name: "◈ 利润指数" }).click();
+  await page.getByText("行情与指数已更新。", { exact: true }).waitFor();
+  assert.equal(await page.evaluate(() => window.requests), 0);
+  await page.getByRole("button", { name: "刷新行情", exact: true }).click();
   await page
     .getByText("行情已载入；部分请求使用缓存或存在数据提示。", { exact: true })
     .waitFor();
@@ -443,8 +466,38 @@ try {
   assert.equal(await empty.locator("svg").count(), 0);
   await isolated.close();
   assert.deepEqual(errors, []);
+  // Close and restart Chromium with the same disk profile, not just a page reload.
+  await mkdir("work", { recursive: true });
+  const profile = await mkdtemp("work/browser-cache-");
+  try {
+    for (const reopening of [false, true]) {
+      const context = await chromium.launchPersistentContext(
+        profile,
+        launchOptions,
+      );
+      try {
+        const persisted = await context.newPage();
+        await configurePage(persisted);
+        await persisted.goto("https://www.milkywayidle.com/game");
+        await persisted.addScriptTag({ content: script });
+        await persisted.getByRole("button", { name: "◈ 利润指数" }).click();
+        await persisted
+          .getByText("行情与指数已更新。", { exact: true })
+          .waitFor();
+        assert.equal(
+          await persisted.evaluate(() => window.requests),
+          reopening ? 0 : items.length + 2,
+        );
+        assert.equal(await persisted.locator(".chart svg").count(), 3);
+      } finally {
+        await context.close();
+      }
+    }
+  } finally {
+    await rm(profile, { recursive: true, force: true });
+  }
   console.log(
-    "Browser PASS: mount, M units, fixed rules, player modes, missing role, configuration refresh, shared details across tabs/periods/ranges/modes, periods, constituents, keyboard, mobile, export, offline cache and retryable failure.",
+    "Browser PASS: mount, M units, fixed rules, player modes, missing role, configuration refresh, shared details across tabs/periods/ranges/modes, periods, constituents, keyboard, mobile, export, zero-request cache reload and browser restart, selective manual refresh, offline cache and retryable failure.",
   );
 } finally {
   await browser.close();

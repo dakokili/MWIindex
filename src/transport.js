@@ -11,6 +11,23 @@ import {
 } from "./data.js";
 import { DAY } from "./indices.js";
 const CACHE_VERSION = 1;
+// History shards contain the entire retention window, not an append-only delta.
+// Check them less often than the small current snapshot; manual refresh bypasses
+// these timers but still reuses shards whose manifest metadata has not changed.
+export const HISTORY_CHECK_INTERVAL = 6 * 60 * 60 * 1000;
+export const CURRENT_CHECK_INTERVAL = 5 * 60 * 1000;
+function isFresh(checkedAt, now, interval) {
+  return (
+    Number.isFinite(checkedAt) && now >= checkedAt && now - checkedAt < interval
+  );
+}
+function validShard(payload, id) {
+  return (
+    payload?.itemHrid === id &&
+    Number(payload.variant) === 0 &&
+    Array.isArray(payload.rows)
+  );
+}
 function request(url, attempt = 0) {
   return new Promise((resolve, reject) => {
     GM_xmlhttpRequest({
@@ -92,18 +109,35 @@ export async function loadHistory(
       warnings.push("本地缓存不可写；本次数据仍可显示");
     }
   };
-  const previous = (await safeGet("snapshots")) || [];
-  let manifest;
+  const storedSnapshots = await safeGet("snapshots");
+  const previous = Array.isArray(storedSnapshots) ? storedSnapshots : [];
+  let manifest, cachedManifest;
   try {
-    manifest = validateManifest(await request(MANIFEST_URL));
-    await safeSet("manifest", manifest);
-  } catch (e) {
-    manifest = await safeGet("manifest");
-    warnings.push(`历史目录更新失败：${e.message}`);
-    if (!manifest) {
-      if (previous.length)
-        return { snapshots: previous, warnings, offline: true };
-      throw new Error("历史数据源不可用，且没有本地缓存。请稍后重试。");
+    cachedManifest = validateManifest(await safeGet("manifest"));
+  } catch {
+    // Missing or invalid caches are fetched again, including legacy installations.
+  }
+  if (
+    !force &&
+    cachedManifest &&
+    isFresh(cachedManifest.checkedAt, now, HISTORY_CHECK_INTERVAL)
+  ) {
+    manifest = cachedManifest;
+  } else {
+    try {
+      progress("检查历史行情更新…");
+      manifest = validateManifest(await request(MANIFEST_URL));
+      // Store the check time with the manifest in one transaction. An interrupted
+      // write must never mark an older manifest as freshly checked.
+      await safeSet("manifest", { ...manifest, checkedAt: now });
+    } catch (e) {
+      manifest = cachedManifest;
+      warnings.push(`历史目录更新失败：${e.message}`);
+      if (!manifest) {
+        if (previous.length)
+          return { snapshots: previous, warnings, offline: true };
+        throw new Error("历史数据源不可用，且没有本地缓存。请稍后重试。");
+      }
     }
   }
   const needed = requiredItems(data, options);
@@ -117,21 +151,19 @@ export async function loadHistory(
     const key = "shard:" + id,
       cached = await safeGet(key);
     if (
-      !force &&
+      validShard(cached?.data, id) &&
       cached?.updated === entry.latestTime &&
-      cached?.rows === entry.rows
+      cached?.rows === entry.rows &&
+      (cached.path === undefined || cached.path === entry.path) &&
+      (cached.retention === undefined ||
+        cached.retention === (entry.hourlyRetentionDays ?? 60))
     ) {
       progress(`读取行情 ${++done}/${needed.length}`);
       return cached.data;
     }
     try {
       const payload = await request(shardUrl(entry.path));
-      if (
-        payload.itemHrid !== id ||
-        Number(payload.variant) !== 0 ||
-        !Array.isArray(payload.rows)
-      )
-        throw new Error("返回物品不匹配");
+      if (!validShard(payload, id)) throw new Error("返回物品不匹配");
       // Keep only raw rows in the per-item cache; accumulated raw snapshots are stored separately.
       const cutoff =
         manifest.latestSnapshot.timestamp -
@@ -143,24 +175,42 @@ export async function loadHistory(
       await safeSet(key, {
         updated: entry.latestTime,
         rows: entry.rows,
+        path: entry.path,
+        retention: entry.hourlyRetentionDays ?? 60,
         data: trimmed,
       });
       return trimmed;
     } catch (e) {
       warnings.push(`${data.items[id]?.zh || id} 下载失败：${e.message}`);
-      return cached?.data || null;
+      return validShard(cached?.data, id) ? cached.data : null;
     } finally {
       progress(`下载行情 ${++done}/${needed.length}`);
     }
   });
   let snapshots = normalizeShards(shards.filter(Boolean), manifest);
+  const cachedCurrent = await safeGet("current");
+  let current;
   try {
-    snapshots = mergeSnapshots(snapshots, [
-      normalizeCurrent(await request(CURRENT_URL), needed),
-    ]);
+    current = normalizeCurrent(cachedCurrent?.data, needed);
+  } catch {
+    // A corrupt or missing snapshot should not suppress the next request.
+  }
+  try {
+    if (
+      force ||
+      !current ||
+      !isFresh(cachedCurrent?.checkedAt, now, CURRENT_CHECK_INTERVAL)
+    ) {
+      progress("更新最新行情…");
+      const payload = await request(CURRENT_URL);
+      current = normalizeCurrent(payload, needed);
+      // Keep all items so changing player configuration can reuse this snapshot.
+      await safeSet("current", { checkedAt: now, data: payload });
+    }
   } catch (e) {
     warnings.push(`最新快照读取失败：${e.message}`);
   }
+  if (current) snapshots = mergeSnapshots(snapshots, [current]);
   snapshots = mergeSnapshots(previous, snapshots).filter(
     (s) =>
       s.time >=

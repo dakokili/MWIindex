@@ -94,6 +94,7 @@ export function mount() {
     render();
   });
   const refresh = button("刷新行情", () => refreshData(true));
+  refresh.title = "立即检查历史目录和最新报价，仅下载缺失或已变化的历史分片";
   const updateEquipment = button("更新装备数据", () =>
     refreshData(false, true, true),
   );
@@ -179,7 +180,7 @@ export function mount() {
   const status = node(
     "p",
     { class: "status", role: "status", "aria-live": "polite" },
-    "展开后加载公开行情；首次约 160 个小分片，随后使用本地缓存。",
+    "首次展开下载历史行情；之后复用本地缓存，历史每 6 小时检查、最新报价每 5 分钟检查。可点击“刷新行情”立即检查。",
   );
   const warnings = node("div"),
     info = node("p", { class: "source-info muted" }),
